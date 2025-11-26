@@ -1018,7 +1018,7 @@ export default function GanDengYan() {
                     let detailText = "";
 
                     if (isWinner) {
-                       detailText = "🎉 赢家通吃";
+                       detailText = "赢家通吃";
                        let totalWin = 0;
                        state.players.forEach(loser => {
                            if (loser.id === state.lastWinnerIndex) return;
@@ -1054,7 +1054,7 @@ export default function GanDengYan() {
                            gridTemplateColumns: "1.2fr 1.5fr 60px 60px",
                            gap: "10px",
                            alignItems: "center",
-                           background: isWinner ? "rgba(44, 62, 80, 0.5)" : "transparent",
+                           background: isWinner ? "rgba(255, 193, 7, 0.2)" : "transparent",
                            padding: "10px 10px", 
                            borderRadius: "8px",
                            borderBottom: "1px solid #34495e"
