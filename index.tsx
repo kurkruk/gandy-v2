@@ -1308,7 +1308,7 @@ export default function GanDengYan() {
 
           {lobbyStep === "SELECT_COUNT" && (
              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "20px" }}>
-                <h3 style={{ margin: 0 }}>选择AI人数</h3>
+                <h3 style={{ margin: 0 }}>选择游戏人数</h3>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px" }}>
                    {[2,3,4,5,6,7].map(num => (
                      <button
