@@ -562,6 +562,34 @@ export default function GanDengYan() {
     audio.init();
     audio.playClick();
   };
+  
+  // Soft Exit Function to prevent 404 on reload
+  const exitToLobby = () => {
+      if (peer) {
+          peer.destroy();
+          setPeer(null);
+      }
+      setConnections([]);
+      setNetLogs([]);
+      setJoinRoomId("");
+      setHostRoomId("");
+      
+      setState({
+        status: "lobby",
+        players: [],
+        deck: [],
+        tablePile: [],
+        currentPlayerIndex: 0,
+        lastWinnerIndex: 0,
+        dealerId: 0,
+        passesInARow: 0,
+        bombCount: 0,
+        scores: {}
+      });
+      setLobbyStep("MAIN");
+      setBombToast(null);
+      setSelectedCardIds([]);
+  };
 
   const showMessage = useCallback((msg: string, duration: number = 0) => {
     setLastMessage(msg);
@@ -584,10 +612,11 @@ export default function GanDengYan() {
     addLog("初始化P2P网络(含腾讯STUN)...");
     
     // NEW: Use config with China STUN servers
-    const newPeer = new Peer(undefined, {
+    // FIX: Pass options as first argument (or cast undefined to any) to avoid TS error
+    const newPeer = new Peer({
        config: PEER_CONFIG,
        debug: 1
-    });
+    } as any);
     
     newPeer.on('open', (id) => {
       setMyPeerId(id);
@@ -621,7 +650,7 @@ export default function GanDengYan() {
          setConnections(prev => [...prev, conn]);
          // Wait for PLAYER_JOIN to add player
       });
-      conn.on('error', (err) => addLog(`连接内错误: ${err}`));
+      conn.on('error', (err) => addLog(`连接异常: ${err}`));
       conn.on('close', () => addLog("连接已关闭"));
     });
 
@@ -793,9 +822,10 @@ export default function GanDengYan() {
       
       setTimeout(() => {
           const fullId = APP_ID_PREFIX + joinRoomId;
-          const guestPeer = new Peer(undefined, {
+          // FIX: Pass options as first argument to avoid TS error
+          const guestPeer = new Peer({
               config: PEER_CONFIG
-          });
+          } as any);
           
           guestPeer.on('open', (id) => {
               setMyPeerId(id);
@@ -1221,9 +1251,9 @@ export default function GanDengYan() {
 
   if (state.status === "lobby" || state.status === "waiting") {
     return (
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", background: "#1b5e20", gap: "20px" }}>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", background: "#105e3c", gap: "20px" }}>
         <h1 style={{ fontSize: "4rem", color: "#fbc02d", textShadow: "2px 2px 4px black", margin: 0 }}>干瞪眼</h1>
-        <h2 style={{ color: "#fff", opacity: 0.8 }}>Gan Deng Yan Poker</h2>
+        <h2 style={{ color: "#fff", opacity: 0.6, fontSize: "1.2rem", marginTop: "-10px", fontWeight: "normal" }}>BONJOY 特别定制版</h2>
         
         <div style={{ background: "rgba(0,0,0,0.3)", padding: "30px", borderRadius: "10px", display: "flex", flexDirection: "column", gap: "10px", alignItems: "center", minWidth: "300px", maxWidth: "450px", overflow: "hidden" }}>
           
@@ -1250,7 +1280,7 @@ export default function GanDengYan() {
                 ) : (
                     <div style={{ color: "#aaa" }}>等待房主开始...</div>
                 )}
-                <button onClick={() => window.location.reload()} style={{ color: "#ccc", background: "none", border: "none", textDecoration: "underline" }}>退出</button>
+                <button onClick={exitToLobby} style={{ color: "#ccc", background: "none", border: "none", textDecoration: "underline" }}>退出</button>
                 
                 {/* Network Logs Console */}
                 <div style={{ width: "100%", background: "rgba(0,0,0,0.8)", color: "#0f0", fontFamily: "monospace", fontSize: "10px", padding: "5px", borderRadius: "4px", height: "80px", overflowY: "auto", marginTop: "10px" }}>
@@ -1363,7 +1393,7 @@ export default function GanDengYan() {
                border: "2px solid #f1c40f", display: "flex", flexDirection: "column", position: "relative"
            }}>
              <button
-               onClick={() => window.location.reload()}
+               onClick={exitToLobby}
                style={{
                  position: "absolute", top: "15px", right: "15px",
                  background: "rgba(0,0,0,0.2)", border: "none", color: "white",
@@ -1454,10 +1484,10 @@ export default function GanDengYan() {
       
       <div style={{ position: "absolute", top: "10px", right: "10px", zIndex: 50, display: "flex", gap: "10px" }}>
         <button onClick={toggleMute} style={{ background: "rgba(0,0,0,0.4)", color: "white", border: "2px solid white", borderRadius: "50%", width: "40px", height: "40px", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: "16px" }}>{muted ? "🔇" : "🔊"}</button>
-        <button onClick={() => window.location.reload()} style={{ background: "rgba(0,0,0,0.4)", color: "white", border: "1px solid white", borderRadius: "20px", padding: "5px 15px", cursor: "pointer", height: "40px", fontWeight: "bold" }}>退出</button>
+        <button onClick={exitToLobby} style={{ background: "rgba(0,0,0,0.4)", color: "white", border: "1px solid white", borderRadius: "20px", padding: "5px 15px", cursor: "pointer", height: "40px", fontWeight: "bold" }}>退出</button>
       </div>
 
-      <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: "180px", pointerEvents: "none" }}>
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: "200px", pointerEvents: "none" }}>
         {opponents.map((opp) => {
           const posClass = getOpponentPositionStyle(opp.id, state.players.length);
           const avatar = BOT_AVATARS[(opp.id - 1) % BOT_AVATARS.length] || "👤";
@@ -1489,7 +1519,7 @@ export default function GanDengYan() {
           )}
         </div>
         
-        <div style={{ position: "absolute", bottom: "10px", background: "rgba(0,0,0,0.6)", padding: "8px 20px", borderRadius: "20px", border: "1px solid rgba(255,255,255,0.2)" }}>
+        <div style={{ position: "absolute", bottom: "50px", background: "rgba(0,0,0,0.6)", padding: "8px 20px", borderRadius: "20px", border: "1px solid rgba(255,255,255,0.2)" }}>
            <span style={{ marginRight: "15px", color: "#e57373" }}>炸弹数: {state.bombCount}</span>
            <span style={{ color: "#fbc02d", fontWeight: "bold" }}>倍数: x{Math.pow(2, state.bombCount)}</span>
         </div>
@@ -1499,9 +1529,9 @@ export default function GanDengYan() {
         </div>
       </div>
 
-      <div style={{ height: "180px", display: "flex", flexDirection: "column", justifyContent: "flex-end", paddingBottom: "10px", background: "linear-gradient(to top, rgba(0,0,0,0.6), transparent)", zIndex: 20, position: "relative" }}>
+      <div style={{ height: "200px", display: "flex", flexDirection: "column", justifyContent: "flex-end", paddingBottom: "10px", background: "linear-gradient(to top, rgba(0,0,0,0.6), transparent)", zIndex: 20, position: "relative" }}>
          
-         <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "20px", marginBottom: "10px", position: "relative", width: "100%" }}>
+         <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "20px", marginBottom: "25px", position: "relative", width: "100%" }}>
             {user.lastAction === "PASS" && !isMyTurn && (
                  <div className="pass-bubble" style={{ position: "absolute", top: "-40px", left: "50%", transform: "translateX(-50%)" }}>不要</div>
             )}
@@ -1526,7 +1556,9 @@ export default function GanDengYan() {
             )}
 
              <div style={{ 
-                 position: "absolute", top: "-15px", right: "5px", 
+                 position: "absolute", 
+                 top: 0, bottom: 0, margin: "auto 0", height: "fit-content",
+                 right: "10px", 
                  display: "flex", alignItems: "center", gap: "8px", 
                  background: "rgba(0,0,0,0.4)", padding: "5px 10px", borderRadius: "15px",
                  border: "1px solid rgba(255,255,255,0.3)", transform: "scale(0.85)", transformOrigin: "right center"
