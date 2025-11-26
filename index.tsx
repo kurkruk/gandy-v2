@@ -45,6 +45,7 @@ interface GameState {
   tablePile: PlayedHand[];
   currentPlayerIndex: number;
   lastWinnerIndex: number;
+  dealerId: number; // Persists for the whole round
   passesInARow: number;
   bombCount: number;
   scores: { [playerId: number]: number };
@@ -59,6 +60,7 @@ type NetworkAction =
   | { type: "PLAYER_JOIN"; name: string; peerId: string }
   | { type: "ACTION_PLAY"; cards: Card[]; analysis: any }
   | { type: "ACTION_PASS" }
+  | { type: "SHOW_MESSAGE"; text: string; duration: number }
   | { type: "START_GAME"; playerCount: number };
 
 const SUITS: Suit[] = ["spades", "hearts", "clubs", "diamonds"];
@@ -492,6 +494,7 @@ export default function GanDengYan() {
     tablePile: [],
     currentPlayerIndex: 0,
     lastWinnerIndex: 0,
+    dealerId: 0,
     passesInARow: 0,
     bombCount: 0,
     scores: {}
@@ -577,6 +580,12 @@ export default function GanDengYan() {
           setState(data.state);
           return;
       }
+      
+      // Guest receiving message popup
+      if (data.type === "SHOW_MESSAGE") {
+          showMessage(data.text, data.duration);
+          return;
+      }
 
       // Host receiving Join
       if (data.type === "PLAYER_JOIN") {
@@ -619,6 +628,12 @@ export default function GanDengYan() {
       if (!newState.isHost) return;
       connectionsRef.current.forEach(conn => {
           if(conn.open) conn.send({ type: "SYNC_STATE", state: newState });
+      });
+  }, []);
+  
+  const broadcastMessage = useCallback((text: string, duration: number = 2000) => {
+      connectionsRef.current.forEach(conn => {
+          if(conn.open) conn.send({ type: "SHOW_MESSAGE", text, duration });
       });
   }, []);
 
@@ -700,6 +715,9 @@ export default function GanDengYan() {
                  const me = s.players.find(p => p.peerId === guestPeer.id); 
                  setState({ ...s, isHost: false, myPlayerId: me ? me.id : -1 });
              }
+             if (data.type === "SHOW_MESSAGE") {
+                 showMessage(data.text, data.duration);
+             }
           });
           conn.on('close', () => {
               showMessage("房主已断开", 3000);
@@ -716,6 +734,34 @@ export default function GanDengYan() {
   };
 
   // --- GAME LOGIC ---
+
+  const dealAndPlay = (players: Player[], deck: Card[], dealerIdx: number) => {
+        players.forEach((p, idx) => {
+          const cardsToTake = idx === dealerIdx ? 6 : 5;
+          p.hand = sortCards(deck.splice(0, cardsToTake));
+          p.cardsLeft = p.hand.length;
+        });
+
+        setGameState((prev) => ({
+          status: "playing",
+          players,
+          deck,
+          tablePile: [],
+          currentPlayerIndex: dealerIdx,
+          lastWinnerIndex: dealerIdx,
+          dealerId: dealerIdx,
+          passesInARow: 0,
+          bombCount: 0,
+          scores: prev.scores,
+          isHost: prev.isHost !== undefined ? prev.isHost : true, 
+          myPlayerId: prev.myPlayerId !== undefined ? prev.myPlayerId : 0
+        }));
+        
+        audio.playDeal();
+        showMessage(`游戏开始！${players[dealerIdx].name} 先出。`, 3000);
+        broadcastMessage(`游戏开始！${players[dealerIdx].name} 先出。`);
+        setSelectedCardIds([]);
+  }
 
   const startGame = (count: number) => {
     audio.init();
@@ -748,34 +794,34 @@ export default function GanDengYan() {
         }
     }
 
-    let dealerIndex = Math.floor(Math.random() * players.length);
-    if (state.lastWinnerIndex >= 0 && state.lastWinnerIndex < players.length && state.status !== "lobby" && state.status !== "waiting") {
-      dealerIndex = state.lastWinnerIndex;
+    // Determine Dealer
+    // If first game (from lobby/waiting), perform Ritual.
+    if (state.status === 'lobby' || state.status === 'waiting') {
+        const dealerIdx = Math.floor(Math.random() * players.length);
+        
+        const msg1 = "🎲 命运的齿轮开始转动...";
+        showMessage(msg1, 1500);
+        broadcastMessage(msg1, 1500);
+
+        setTimeout(() => {
+            const msg2 = `🎉 本次天选之子是：${players[dealerIdx].name}！`;
+            showMessage(msg2, 1500);
+            broadcastMessage(msg2, 1500);
+            audio.playDeal(); // Sound effect for selection
+
+            setTimeout(() => {
+                dealAndPlay(players, newDeck, dealerIdx);
+            }, 1500);
+        }, 1500);
+        return;
     }
 
-    players.forEach((p, idx) => {
-      const cardsToTake = idx === dealerIndex ? 6 : 5;
-      p.hand = sortCards(newDeck.splice(0, cardsToTake));
-      p.cardsLeft = p.hand.length;
-    });
-
-    setGameState(() => ({
-      status: "playing",
-      players,
-      deck: newDeck,
-      tablePile: [],
-      currentPlayerIndex: dealerIndex,
-      lastWinnerIndex: dealerIndex,
-      passesInARow: 0,
-      bombCount: 0,
-      scores: state.scores,
-      isHost: state.isHost !== undefined ? state.isHost : true, 
-      myPlayerId: state.myPlayerId !== undefined ? state.myPlayerId : 0
-    }));
-    
-    audio.playDeal();
-    showMessage(`游戏开始！${players[dealerIndex].name} 先出。`, 3000);
-    setSelectedCardIds([]);
+    // Subsequent games, winner deals
+    let dealerIndex = 0;
+    if (state.lastWinnerIndex >= 0 && state.lastWinnerIndex < players.length) {
+      dealerIndex = state.lastWinnerIndex;
+    }
+    dealAndPlay(players, newDeck, dealerIndex);
   };
 
   const calculateScores = useCallback((winnerIdx: number, players: Player[], bombs: number, oldScores: {[k:number]:number}) => {
@@ -1031,22 +1077,26 @@ export default function GanDengYan() {
         <h1 style={{ fontSize: "4rem", color: "#fbc02d", textShadow: "2px 2px 4px black", margin: 0 }}>干瞪眼</h1>
         <h2 style={{ color: "#fff", opacity: 0.8 }}>Gan Deng Yan Poker</h2>
         
-        <div style={{ background: "rgba(0,0,0,0.3)", padding: "30px", borderRadius: "10px", display: "flex", flexDirection: "column", gap: "10px", alignItems: "center", minWidth: "300px" }}>
+        <div style={{ background: "rgba(0,0,0,0.3)", padding: "30px", borderRadius: "10px", display: "flex", flexDirection: "column", gap: "10px", alignItems: "center", minWidth: "300px", maxWidth: "450px", overflow: "hidden" }}>
           
           {state.status === "waiting" ? (
-             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "15px" }}>
+             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "15px", width: "100%" }}>
                 <h3 style={{ margin: 0, color: "#fff", opacity: 0.8 }}>房间号</h3>
                 <div style={{ background: "transparent", padding: "10px", border: "3px dashed #fbc02d", borderRadius: "10px" }}>
                     <h1 style={{ margin: 0, fontSize: "6rem", color: "#fbc02d", letterSpacing: "5px", lineHeight: 1 }}>{hostRoomId}</h1>
                 </div>
                 <div style={{ color: "#ddd" }}>已加入玩家 ({state.players.length}人):</div>
-                <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", justifyContent: "center" }}>
+                
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "10px", width: "100%", maxHeight: "200px", overflowY: "auto" }}>
                     {state.players.map(p => (
-                        <div key={p.id} style={{ background: "rgba(255,255,255,0.2)", padding: "5px 10px", borderRadius: "5px" }}>
-                            {p.name} {p.id === 0 ? "(房主)" : ""}
+                        <div key={p.id} style={{ background: "rgba(255,255,255,0.2)", padding: "10px 5px", borderRadius: "8px", display: "flex", flexDirection: "column", alignItems: "center", gap: "5px" }}>
+                            <div style={{ fontSize: "2rem" }}>{BOT_AVATARS[(p.id - 1) % BOT_AVATARS.length]}</div>
+                            <div style={{ fontSize: "0.9rem", color: "white", fontWeight: "bold", textAlign: "center", width: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+                            {p.id === 0 && <span style={{ fontSize: "0.8rem", color: "#fbc02d" }}>👑 房主</span>}
                         </div>
                     ))}
                 </div>
+
                 {state.isHost ? (
                     <button onClick={() => startGame(0)} style={{ padding: "10px 30px", background: "#4caf50", border: "none", borderRadius: "20px", fontSize: "1.2rem", color: "white", marginTop: "10px" }}>开始游戏</button>
                 ) : (
@@ -1232,6 +1282,7 @@ export default function GanDengYan() {
   const squeeze = cardCount <= 5 ? -40 : -40 - ((cardCount - 5) * 4);
   const cardOverlap = Math.max(-70, squeeze);
   const isMyTurn = state.currentPlayerIndex === myId;
+  const isDealer = state.dealerId === myId;
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", position: "relative", overflow: "hidden" }}>
@@ -1245,10 +1296,12 @@ export default function GanDengYan() {
         {opponents.map((opp) => {
           const posClass = getOpponentPositionStyle(opp.id, state.players.length);
           const avatar = BOT_AVATARS[(opp.id - 1) % BOT_AVATARS.length] || "👤";
+          const isOppDealer = state.dealerId === opp.id;
           return (
             <div key={opp.id} className={`opponent-container ${posClass}`} style={{ opacity: state.currentPlayerIndex === opp.id ? 1 : 0.7, transform: state.currentPlayerIndex === opp.id ? "scale(1.15)" : "scale(1)", zIndex: 10 }}>
               <div style={{ position: "relative" }}>
                  <div style={{ width: "50px", height: "50px", borderRadius: "50%", background: opp.color, display: "flex", alignItems: "center", justifyContent: "center", border: state.currentPlayerIndex === opp.id ? "3px solid #fbc02d" : "2px solid #fff", color: "white", fontSize: "28px", boxShadow: "0 2px 4px rgba(0,0,0,0.3)" }}>{avatar}</div>
+                 {isOppDealer && <div className="dealer-badge">庄</div>}
                  {opp.lastAction === "PASS" && <div className="pass-bubble">不要</div>}
               </div>
               <div style={{ background: "#fff", color: "#d32f2f", padding: "2px 8px", borderRadius: "10px", marginTop: "-10px", fontWeight: "bold", fontSize: "1.2rem", zIndex: 2, position: "relative", boxShadow: "0 1px 2px black" }}>{opp.cardsLeft}</div>
@@ -1315,6 +1368,7 @@ export default function GanDengYan() {
              }}>
                 <div style={{ fontSize: "20px" }}>🂠</div>
                 <span style={{ fontSize: "1rem", whiteSpace: "nowrap", fontWeight: "bold" }}>剩余 {state.deck.length}</span>
+                {isDealer && <div className="dealer-badge" style={{ position: "static" }}>庄</div>}
              </div>
          </div>
 
