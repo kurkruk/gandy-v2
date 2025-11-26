@@ -52,6 +52,7 @@ interface GameState {
 const SUITS: Suit[] = ["spades", "hearts", "clubs", "diamonds"];
 const RANKS = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]; // 3-2
 const BOT_COLORS = ["#ef5350", "#ab47bc", "#5c6bc0", "#26c6da", "#66bb6a", "#ffa726", "#8d6e63"];
+const BOT_AVATARS = ["🐼", "🐨", "🦊", "🐶", "🐱", "🐰", "🐹", "🐯"];
 
 // --- AUDIO SYSTEM ---
 
@@ -1068,6 +1069,7 @@ export default function GanDengYan() {
       <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: "180px", pointerEvents: "none" }}>
         {opponents.map((opp) => {
           const posClass = getOpponentPositionStyle(opp.id, state.players.length);
+          const avatar = BOT_AVATARS[(opp.id - 1) % BOT_AVATARS.length];
           return (
             <div key={opp.id} className={`opponent-container ${posClass}`} style={{ 
                opacity: state.currentPlayerIndex === opp.id ? 1 : 0.7,
@@ -1075,7 +1077,7 @@ export default function GanDengYan() {
                zIndex: 10 
             }}>
               <div style={{ position: "relative" }}>
-                 <div style={{ width: "50px", height: "50px", borderRadius: "50%", background: opp.color, display: "flex", alignItems: "center", justifyContent: "center", border: state.currentPlayerIndex === opp.id ? "3px solid #fbc02d" : "2px solid #fff", color: "white", fontSize: "24px", boxShadow: "0 2px 4px rgba(0,0,0,0.3)" }}>🤖</div>
+                 <div style={{ width: "50px", height: "50px", borderRadius: "50%", background: opp.color, display: "flex", alignItems: "center", justifyContent: "center", border: state.currentPlayerIndex === opp.id ? "3px solid #fbc02d" : "2px solid #fff", color: "white", fontSize: "28px", boxShadow: "0 2px 4px rgba(0,0,0,0.3)" }}>{avatar}</div>
                  {opp.lastAction === "PASS" && <div className="pass-bubble">不要</div>}
               </div>
               <div style={{ background: "#fff", color: "#d32f2f", padding: "2px 8px", borderRadius: "10px", marginTop: "-10px", fontWeight: "bold", fontSize: "1.2rem", zIndex: 2, position: "relative", boxShadow: "0 1px 2px black" }}>{opp.cardsLeft}</div>
