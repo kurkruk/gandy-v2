@@ -893,7 +893,7 @@ export default function GanDengYan() {
 
   // --- GAME LOGIC ---
 
-  const dealAndPlay = (players: Player[], deck: Card[], dealerIdx: number) => {
+  const dealAndPlay = (players: Player[], deck: Card[], dealerIdx: number, initialScores: {[k:number]:number}) => {
         players.forEach((p, idx) => {
           const cardsToTake = idx === dealerIdx ? 6 : 5;
           p.hand = sortCards(deck.splice(0, cardsToTake));
@@ -910,8 +910,7 @@ export default function GanDengYan() {
           dealerId: dealerIdx,
           passesInARow: 0,
           bombCount: 0,
-          // KEEP Scores from previous round if invalid or reset only on lobby
-          scores: prev.scores,
+          scores: initialScores,
           isHost: prev.isHost !== undefined ? prev.isHost : true, 
           myPlayerId: prev.myPlayerId !== undefined ? prev.myPlayerId : 0
         }));
@@ -932,6 +931,7 @@ export default function GanDengYan() {
     // Check if we should preserve existing multiplayer/local session players
     // This happens if we are in waiting room OR if we are restarting a game (scoring/celebrating)
     const shouldPreservePlayers = state.status === "waiting" || state.status === "scoring" || state.status === "celebrating";
+    let scoresToKeep: {[k:number]:number} = {};
 
     if (shouldPreservePlayers) {
         // Reuse existing players, just reset hands/status
@@ -943,15 +943,17 @@ export default function GanDengYan() {
             lastAction: null
         }));
         
+        // Preserve scores if coming from a previous game (scoring/celebrating), otherwise (waiting) it's a new session
+        if (state.status === "scoring" || state.status === "celebrating") {
+            scoresToKeep = state.scores;
+        }
+
         if (state.status === "waiting" && players.length < 2) {
             showMessage("至少需要2人", 1000);
             return;
         }
     } else {
-        // Single Player Setup - Create Bots (Reset Scores implicitly by creating new state later if needed, but actually we rely on 'scores' in state)
-        // If coming from MAIN lobby, we want fresh start.
-        setGameState(prev => ({...prev, scores: {}})); // Reset scores for fresh single player game
-
+        // Single Player Setup - Create Bots
         for (let i = 0; i < count; i++) {
           const isHuman = i === 0;
           players.push({
@@ -966,6 +968,7 @@ export default function GanDengYan() {
             color: isHuman ? "transparent" : BOT_COLORS[(i - 1) % BOT_COLORS.length]
           });
         }
+        // Scores default to empty for new single player game
     }
 
     // Determine Dealer
@@ -984,7 +987,7 @@ export default function GanDengYan() {
             audio.playDeal(); // Sound effect for selection
 
             setTimeout(() => {
-                dealAndPlay(players, newDeck, dealerIdx);
+                dealAndPlay(players, newDeck, dealerIdx, scoresToKeep);
             }, 1500);
         }, 1500);
         return;
@@ -995,7 +998,7 @@ export default function GanDengYan() {
     if (state.lastWinnerIndex >= 0 && state.lastWinnerIndex < players.length) {
       dealerIndex = state.lastWinnerIndex;
     }
-    dealAndPlay(players, newDeck, dealerIndex);
+    dealAndPlay(players, newDeck, dealerIndex, scoresToKeep);
   };
 
   const calculateScores = useCallback((winnerIdx: number, players: Player[], bombs: number, oldScores: {[k:number]:number}) => {
