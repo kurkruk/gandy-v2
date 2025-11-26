@@ -7,5 +7,8 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     assetsDir: 'assets'
+  },
+  server: {
+    host: true // This exposes the app to your local network (LAN)
   }
 })

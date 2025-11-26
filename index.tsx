@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback, memo } from "react";
 import { createRoot } from "react-dom/client";
+import Peer, { DataConnection } from "peerjs";
 
 // --- TYPES & CONSTANTS ---
 
 type Suit = "spades" | "hearts" | "clubs" | "diamonds" | "joker";
 type Rank = 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17;
-// 11=J, 12=Q, 13=K, 14=A, 15=2, 16=Small Joker, 17=Big Joker
 
 interface Card {
   id: string;
@@ -24,6 +24,7 @@ interface Player {
   lastAction: "PLAY" | "PASS" | null;
   role: "host" | "guest" | "bot";
   color: string;
+  peerId?: string; // For network identification
 }
 
 type HandType = "SINGLE" | "PAIR" | "STRAIGHT" | "BOMB" | "KING_BOMB" | "INVALID";
@@ -38,7 +39,7 @@ interface PlayedHand {
 }
 
 interface GameState {
-  status: "lobby" | "dealing" | "playing" | "celebrating" | "scoring";
+  status: "lobby" | "dealing" | "playing" | "celebrating" | "scoring" | "waiting";
   players: Player[];
   deck: Card[];
   tablePile: PlayedHand[];
@@ -47,12 +48,24 @@ interface GameState {
   passesInARow: number;
   bombCount: number;
   scores: { [playerId: number]: number };
+  roomId?: string; // Multiplayer Room ID
+  isHost?: boolean;
+  myPlayerId?: number; // Which player am I?
 }
 
+// Network Payload Types
+type NetworkAction = 
+  | { type: "SYNC_STATE"; state: GameState }
+  | { type: "PLAYER_JOIN"; name: string; peerId: string }
+  | { type: "ACTION_PLAY"; cards: Card[]; analysis: any }
+  | { type: "ACTION_PASS" }
+  | { type: "START_GAME"; playerCount: number };
+
 const SUITS: Suit[] = ["spades", "hearts", "clubs", "diamonds"];
-const RANKS = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]; // 3-2
+const RANKS = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]; 
 const BOT_COLORS = ["#ef5350", "#ab47bc", "#5c6bc0", "#26c6da", "#66bb6a", "#ffa726", "#8d6e63"];
 const BOT_AVATARS = ["🐼", "🐨", "🦊", "🐶", "🐱", "🐰", "🐹", "🐯"];
+const APP_ID_PREFIX = "gdy-game-v1-"; // Unique prefix to avoid collision on public PeerServer
 
 // --- AUDIO SYSTEM ---
 
@@ -113,7 +126,6 @@ class SoundManager {
   }
 }
 
-// Instantiate globally to avoid re-creation
 const audio = new SoundManager();
 
 // --- UTILS ---
@@ -134,8 +146,8 @@ const generateDeck = (): Card[] => {
     });
   });
 
-  deck.push({ id: `c-${id++}`, suit: "joker", rank: 16, display: "小王" }); // Small
-  deck.push({ id: `c-${id++}`, suit: "joker", rank: 17, display: "大王" }); // Big
+  deck.push({ id: `c-${id++}`, suit: "joker", rank: 16, display: "小王" }); 
+  deck.push({ id: `c-${id++}`, suit: "joker", rank: 17, display: "大王" }); 
 
   return deck;
 };
@@ -148,81 +160,43 @@ const sortCards = (cards: Card[]) => {
   return [...cards].sort((a, b) => a.rank - b.rank);
 };
 
-// Core Rule Logic
 const analyzeHand = (cards: Card[]): { type: HandType; primaryRank: number; length: number; bombLevel: number } | null => {
   if (cards.length === 0) return null;
-  
   const sorted = sortCards(cards);
   const len = sorted.length;
   const jokers = sorted.filter(c => c.suit === "joker");
   const normals = sorted.filter(c => c.suit !== "joker");
   const jokerCount = jokers.length;
 
-  // King Bomb
-  if (len === 2 && jokerCount === 2) {
-    return { type: "KING_BOMB", primaryRank: 17, length: 2, bombLevel: 99 };
-  }
-
+  if (len === 2 && jokerCount === 2) return { type: "KING_BOMB", primaryRank: 17, length: 2, bombLevel: 99 };
   if (normals.length === 0) return null;
 
   const uniqueRanks = Array.from(new Set(normals.map(c => c.rank)));
 
-  // Single
   if (len === 1) {
     if (jokerCount > 0) return null;
     return { type: "SINGLE", primaryRank: sorted[0].rank, length: 1, bombLevel: 0 };
   }
 
-  // Pair
   if (len === 2) {
-    if (uniqueRanks.length === 1) {
-      return { type: "PAIR", primaryRank: normals[0].rank, length: 2, bombLevel: 0 };
-    }
-    // Joker used as pair? e.g. 3 + Joker
-    if (jokerCount === 1 && normals.length === 1) {
-        return { type: "PAIR", primaryRank: normals[0].rank, length: 2, bombLevel: 0 };
-    }
+    if (uniqueRanks.length === 1) return { type: "PAIR", primaryRank: normals[0].rank, length: 2, bombLevel: 0 };
+    if (jokerCount === 1 && normals.length === 1) return { type: "PAIR", primaryRank: normals[0].rank, length: 2, bombLevel: 0 };
     return null;
   }
 
-  // Bomb (3+ same rank)
   if (len >= 3 && uniqueRanks.length === 1) {
-    const rank = normals[0].rank;
-    const bombLevel = len - 2;
-    return { type: "BOMB", primaryRank: rank, length: len, bombLevel };
+    return { type: "BOMB", primaryRank: normals[0].rank, length: len, bombLevel: len - 2 };
   }
 
-  // Bomb with Joker (e.g. 3,3,3,Joker)
   if (len >= 3 && uniqueRanks.length === 1 && jokerCount > 0) {
-      const rank = normals[0].rank;
-      const bombLevel = len - 2;
-      return { type: "BOMB", primaryRank: rank, length: len, bombLevel };
+      return { type: "BOMB", primaryRank: normals[0].rank, length: len, bombLevel: len - 2 };
   }
 
-  // Straight
   if (len >= 3 && uniqueRanks.length > 1) {
-    // Basic Straight Logic + Joker handling (simplified)
-    // We check if the normal cards fit into a sequence pattern
-    
-    // Valid patterns: Standard (3,4,5), Virtual (14,15,3 => A,2,3), (15,3,4 => 2,3,4)
-    // The Rank values are 3..15(2). 
-    // Virtual 1: A(14), 2(15), 3(3)
-    // Virtual 2: 2(15), 3(3), 4(4)
-    // ...
-    // Normal: k, k+1, k+2 ...
-    
-    // For simplicity with Jokers, we check gaps. 
-    // If gaps <= jokerCount, it's a straight.
-    // EXCEPT 2 cannot be in middle of standard straight.
-    
-    // Let's implement Strict Standard Straights for AI simplicity first.
-    // If strict match fails, we assume invalid for now to prevent bugs.
-    
     const validSeqs: number[][] = [];
-    if (len >= 3) validSeqs.push([14, 15, ...Array.from({length: len-2}, (_, i) => 3+i)]); // A-2-3...
-    if (len >= 3) validSeqs.push([15, ...Array.from({length: len-1}, (_, i) => 3+i)]); // 2-3-4...
+    if (len >= 3) validSeqs.push([14, 15, ...Array.from({length: len-2}, (_, i) => 3+i)]); 
+    if (len >= 3) validSeqs.push([15, ...Array.from({length: len-1}, (_, i) => 3+i)]); 
     
-    // Standard straights (3 to A)
     for (let start = 3; start <= 14 - len + 1; start++) {
       validSeqs.push(Array.from({length: len}, (_, i) => start + i));
     }
@@ -230,20 +204,10 @@ const analyzeHand = (cards: Card[]): { type: HandType; primaryRank: number; leng
     for (const seq of validSeqs) {
        const seqSet = new Set(seq);
        const isSubset = normals.every(c => seqSet.has(c.rank));
-       if (!isSubset) continue; // Cards don't fit in this sequence pattern
-       
-       // Check duplicates in normals (cannot have pair in straight)
+       if (!isSubset) continue;
        if (uniqueRanks.length !== normals.length) continue;
-
-       // If we are here, normals fit in the sequence. 
-       // We just need to ensure we have enough jokers to fill the missing spots.
-       // But wait, user must provide the cards. 
-       // Logic: input cards = normals + jokers. 
-       // Sequence len = input cards len.
-       // If normals are subset of sequence, and no duplicates, it automatically fits because len is same.
        
        let virtualId = -1;
-       // Assign ID based on first card of sequence
        if (seq[0] === 14 && seq[1] === 15) virtualId = 1;
        else if (seq[0] === 15 && seq[1] === 3) virtualId = 2;
        else virtualId = seq[0];
@@ -267,22 +231,14 @@ const canBeat = (move: NonNullable<ReturnType<typeof analyzeHand>>, last: Played
   }
 
   if (last.type === "BOMB") return false;
-
   if (move.type !== last.type) return false;
   if (move.length !== last.length) return false;
 
-  // Gan Deng Yan Core Rule: Must be exactly Rank + 1 (or 2 covering)
   if (move.type === "SINGLE" || move.type === "PAIR") {
     const isTwo = move.primaryRank === 15;
     const target = last.primaryRank + 1;
-    
-    // Strict +1
     if (move.primaryRank === target) return true;
-    
-    // 2 beats anything (except 2 itself or bombs)
-    // Note: 2 vs 2 handled by strict +1 (15 vs 15 is false)
     if (isTwo && last.primaryRank < 15) return true;
-    
     return false;
   }
 
@@ -296,7 +252,6 @@ const canBeat = (move: NonNullable<ReturnType<typeof analyzeHand>>, last: Played
 // AI STRATEGY (Pure Functions)
 
 const calculateAiMove = (hand: Card[], lastHand: PlayedHand | null): { cards: Card[], analysis: any } | null => {
-    // Helper finders
     const normals = hand.filter(c => c.suit !== "joker");
     const jokers = hand.filter(c => c.suit === "joker");
 
@@ -306,10 +261,9 @@ const calculateAiMove = (hand: Card[], lastHand: PlayedHand | null): { cards: Ca
                 if (c.rank === targetRank + 1) return [c];
                 if (c.rank === 15 && targetRank < 15) return [c];
             } else {
-                if (c.rank < 15) return [c]; // Prefer playing small singles
+                if (c.rank < 15) return [c];
             }
         }
-        // If free turn and only 2s or jokers left
         if (targetRank === null) {
              if (normals.length > 0) return [normals[0]];
              if (jokers.length > 0) return [jokers[0]];
@@ -336,7 +290,6 @@ const calculateAiMove = (hand: Card[], lastHand: PlayedHand | null): { cards: Ca
     };
 
     const findStraight = (minLen: number, targetRank: number | null): Card[] | null => {
-        // Simplified: only looks for standard straights in normals
         const groups: {[k:number]: Card} = {};
         normals.forEach(c => groups[c.rank] = c);
         const ranks = Object.keys(groups).map(Number).sort((a,b)=>a-b);
@@ -382,7 +335,6 @@ const calculateAiMove = (hand: Card[], lastHand: PlayedHand | null): { cards: Ca
     let analysis: any = null;
 
     if (!lastHand) {
-        // FREE TURN
         const s = findStraight(3, null);
         if (s) { move = s; }
         else {
@@ -395,12 +347,10 @@ const calculateAiMove = (hand: Card[], lastHand: PlayedHand | null): { cards: Ca
         }
         if (!move && hand.length > 0) move = [hand[0]];
     } else {
-        // RESPOND TURN
         if (lastHand.type === "SINGLE") move = findSingle(lastHand.primaryRank);
         else if (lastHand.type === "PAIR") move = findPair(lastHand.primaryRank);
         else if (lastHand.type === "STRAIGHT") move = findStraight(lastHand.length, lastHand.primaryRank);
 
-        // Try Bomb if regular move fails
         if (!move && lastHand.type !== "KING_BOMB") {
             const lvl = lastHand.type === "BOMB" ? lastHand.bombLevel : 0;
             const rk = lastHand.type === "BOMB" ? lastHand.primaryRank : 0;
@@ -417,7 +367,6 @@ const calculateAiMove = (hand: Card[], lastHand: PlayedHand | null): { cards: Ca
 
 // --- COMPONENTS ---
 
-// Memoized Card Component for Performance
 const CardView: React.FC<{ card: Card; selected?: boolean; small?: boolean; onClick?: () => void }> = memo(({ card, selected, small, onClick }) => {
   const isRed = card.suit === "hearts" || card.suit === "diamonds" || (card.suit === "joker" && card.rank === 17);
   const isJoker = card.suit === "joker";
@@ -486,13 +435,10 @@ const Confetti = memo(() => {
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
-
     const particles: any[] = [];
     const colors = ["#f44336", "#2196f3", "#ffeb3b", "#4caf50", "#9c27b0"];
-
     for (let i = 0; i < 150; i++) {
       particles.push({
         x: Math.random() * canvas.width,
@@ -505,7 +451,6 @@ const Confetti = memo(() => {
         rotationSpeed: Math.random() * 10 - 5
       });
     }
-
     let animationId: number;
     const animate = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -513,23 +458,19 @@ const Confetti = memo(() => {
         p.y += p.speedY;
         p.x += p.speedX;
         p.rotation += p.rotationSpeed;
-        
         ctx.save();
         ctx.translate(p.x, p.y);
         ctx.rotate((p.rotation * Math.PI) / 180);
         ctx.fillStyle = p.color;
         ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
         ctx.restore();
-
         if (p.y > canvas.height) p.y = -20;
       });
       animationId = requestAnimationFrame(animate);
     };
     animate();
-
     return () => cancelAnimationFrame(animationId);
   }, []);
-
   return <canvas ref={canvasRef} className="confetti-canvas" />;
 });
 
@@ -558,12 +499,25 @@ export default function GanDengYan() {
   
   const [selectedCardIds, setSelectedCardIds] = useState<string[]>([]);
   const [lastMessage, setLastMessage] = useState<string>("");
-  const [lobbyStep, setLobbyStep] = useState<"MAIN" | "SELECT_COUNT">("MAIN");
+  const [lobbyStep, setLobbyStep] = useState<"MAIN" | "SELECT_COUNT" | "MULTI_LOBBY" | "JOIN_ROOM" | "NICKNAME">("MAIN");
+  const [nickname, setNickname] = useState("");
   const [bombToast, setBombToast] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
+  
+  // Network State
+  const [peer, setPeer] = useState<Peer | null>(null);
+  const [myPeerId, setMyPeerId] = useState<string>("");
+  const [connections, setConnections] = useState<DataConnection[]>([]);
+  const connectionsRef = useRef<DataConnection[]>([]);
+  const [joinRoomId, setJoinRoomId] = useState("");
+  const [hostRoomId, setHostRoomId] = useState("");
 
   const aiTimeoutRef = useRef<number | null>(null);
   const msgTimeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    connectionsRef.current = connections;
+  }, [connections]);
   
   const toggleMute = () => {
     const next = !muted;
@@ -587,29 +541,215 @@ export default function GanDengYan() {
     setTimeout(() => setBombToast(null), 2000);
   }, []);
 
+  // --- NETWORK LOGIC ---
+
+  const initNetwork = useCallback(() => {
+    if (peer) return peer;
+    const newPeer = new Peer();
+    
+    newPeer.on('open', (id) => {
+      setMyPeerId(id);
+    });
+
+    newPeer.on('connection', (conn) => {
+      // Logic for Host receiving connections
+      conn.on('data', (data: any) => {
+         handleNetworkData(data, conn);
+      });
+      conn.on('open', () => {
+         setConnections(prev => [...prev, conn]);
+         // Wait for PLAYER_JOIN to add player
+      });
+    });
+
+    newPeer.on('error', (err) => {
+        console.error(err);
+        showMessage("网络连接错误", 2000);
+    });
+
+    setPeer(newPeer);
+    return newPeer;
+  }, [peer]);
+
+  const handleNetworkData = (data: NetworkAction, conn: DataConnection) => {
+      // Guest receiving State
+      if (data.type === "SYNC_STATE") {
+          setState(data.state);
+          return;
+      }
+
+      // Host receiving Join
+      if (data.type === "PLAYER_JOIN") {
+         setGameState(prev => {
+             // Deduplicate
+             if (prev.players.some(p => p.peerId === data.peerId)) return prev;
+
+             const newPId = prev.players.length;
+             const newPlayer: Player = {
+                 id: newPId,
+                 name: data.name,
+                 isAi: false,
+                 hand: [],
+                 cardsLeft: 0,
+                 hasPlayed: false,
+                 lastAction: null,
+                 role: 'guest',
+                 color: BOT_COLORS[(newPId - 1) % BOT_COLORS.length],
+                 peerId: data.peerId
+             };
+             const nextState = { ...prev, players: [...prev.players, newPlayer] };
+             // Send immediate sync to this connection
+             if (conn.open) conn.send({ type: "SYNC_STATE", state: nextState });
+             
+             return nextState;
+         });
+         return;
+      }
+
+      // Host receiving Actions
+      if (data.type === "ACTION_PLAY") {
+          playHand(data.cards, data.analysis); // Host executes
+      }
+      if (data.type === "ACTION_PASS") {
+          nextTurn(true); // Host executes
+      }
+  };
+
+  const broadcastState = useCallback((newState: GameState) => {
+      if (!newState.isHost) return;
+      connectionsRef.current.forEach(conn => {
+          if(conn.open) conn.send({ type: "SYNC_STATE", state: newState });
+      });
+  }, []);
+
+  // Sync state wrapper
+  const setGameState = (updater: (prev: GameState) => GameState) => {
+      setState(prev => {
+          const next = updater(prev);
+          if (next.isHost) {
+             broadcastState(next);
+          }
+          return next;
+      });
+  };
+
+  const createRoom = () => {
+      const p = initNetwork();
+      if (!p) return;
+      
+      const simpleId = Math.floor(1000 + Math.random() * 9000).toString();
+      const fullId = APP_ID_PREFIX + simpleId;
+      
+      const hostPeer = new Peer(fullId);
+      
+      hostPeer.on('open', (id) => {
+          setMyPeerId(id);
+          setHostRoomId(simpleId);
+          setState({
+              ...state,
+              status: "waiting",
+              isHost: true,
+              myPlayerId: 0,
+              roomId: simpleId,
+              players: [{
+                  id: 0,
+                  name: nickname || "房主",
+                  isAi: false,
+                  hand: [],
+                  cardsLeft: 0,
+                  hasPlayed: false,
+                  lastAction: null,
+                  role: 'host',
+                  color: 'transparent'
+              }]
+          });
+      });
+      
+      hostPeer.on('connection', (conn) => {
+          conn.on('data', (d: any) => handleNetworkData(d, conn));
+          conn.on('open', () => {
+             setConnections(prev => [...prev, conn]);
+          });
+      });
+      
+      hostPeer.on('error', (e) => {
+         showMessage("创建房间失败(ID冲突)，请重试", 2000);
+      });
+      
+      setPeer(hostPeer);
+  };
+  
+  const joinRoom = () => {
+      if (joinRoomId.length !== 4) {
+          showMessage("请输入4位房间号", 1000);
+          return;
+      }
+      const fullId = APP_ID_PREFIX + joinRoomId;
+      const guestPeer = new Peer();
+      
+      guestPeer.on('open', (id) => {
+          setMyPeerId(id);
+          const conn = guestPeer.connect(fullId);
+          conn.on('open', () => {
+             showMessage("已连接房主！加入中...", 2000);
+             conn.send({ type: "PLAYER_JOIN", name: nickname || "玩家", peerId: id });
+          });
+          conn.on('data', (data: any) => {
+             if (data.type === "SYNC_STATE") {
+                 const s = data.state as GameState;
+                 const me = s.players.find(p => p.peerId === guestPeer.id); 
+                 setState({ ...s, isHost: false, myPlayerId: me ? me.id : -1 });
+             }
+          });
+          conn.on('close', () => {
+              showMessage("房主已断开", 3000);
+              setState(prev => ({...prev, status: 'lobby'}));
+          });
+          setConnections([conn]); 
+      });
+      
+      guestPeer.on('error', () => {
+          showMessage("找不到房间或连接失败", 2000);
+      });
+      
+      setPeer(guestPeer);
+  };
+
+  // --- GAME LOGIC ---
+
   const startGame = (count: number) => {
     audio.init();
     audio.playClick();
     const newDeck = shuffle(generateDeck());
-    const players: Player[] = [];
     
-    for (let i = 0; i < count; i++) {
-      const isHuman = i === 0;
-      players.push({
-        id: i,
-        name: isHuman ? "你" : `机器人${i}`,
-        isAi: !isHuman,
-        hand: [],
-        cardsLeft: 0,
-        hasPlayed: false,
-        lastAction: null,
-        role: "guest",
-        color: isHuman ? "transparent" : BOT_COLORS[(i - 1) % BOT_COLORS.length]
-      });
+    let players: Player[] = [];
+    
+    if (state.status === "waiting") {
+        players = [...state.players];
+        if (players.length < 2) {
+            showMessage("至少需要2人", 1000);
+            return;
+        }
+    } else {
+        // Single Player Setup
+        for (let i = 0; i < count; i++) {
+          const isHuman = i === 0;
+          players.push({
+            id: i,
+            name: isHuman ? "你" : `机器人${i}`,
+            isAi: !isHuman,
+            hand: [],
+            cardsLeft: 0,
+            hasPlayed: false,
+            lastAction: null,
+            role: "guest",
+            color: isHuman ? "transparent" : BOT_COLORS[(i - 1) % BOT_COLORS.length]
+          });
+        }
     }
 
-    let dealerIndex = Math.floor(Math.random() * count);
-    if (state.lastWinnerIndex >= 0 && state.lastWinnerIndex < count && state.status !== "lobby") {
+    let dealerIndex = Math.floor(Math.random() * players.length);
+    if (state.lastWinnerIndex >= 0 && state.lastWinnerIndex < players.length && state.status !== "lobby" && state.status !== "waiting") {
       dealerIndex = state.lastWinnerIndex;
     }
 
@@ -617,10 +757,9 @@ export default function GanDengYan() {
       const cardsToTake = idx === dealerIndex ? 6 : 5;
       p.hand = sortCards(newDeck.splice(0, cardsToTake));
       p.cardsLeft = p.hand.length;
-      p.role = idx === dealerIndex ? "host" : "guest";
     });
 
-    setState({
+    setGameState(() => ({
       status: "playing",
       players,
       deck: newDeck,
@@ -629,8 +768,10 @@ export default function GanDengYan() {
       lastWinnerIndex: dealerIndex,
       passesInARow: 0,
       bombCount: 0,
-      scores: state.scores
-    });
+      scores: state.scores,
+      isHost: state.isHost !== undefined ? state.isHost : true, 
+      myPlayerId: state.myPlayerId !== undefined ? state.myPlayerId : 0
+    }));
     
     audio.playDeal();
     showMessage(`游戏开始！${players[dealerIndex].name} 先出。`, 3000);
@@ -659,10 +800,9 @@ export default function GanDengYan() {
 
   const handleWin = useCallback((winnerIdx: number, finalBombCount: number, currentPlayers: Player[], lastHand: PlayedHand) => {
     audio.playWin();
-    
     const scoresUpdate = calculateScores(winnerIdx, currentPlayers, finalBombCount, state.scores);
 
-    setState(prev => ({ 
+    setGameState(prev => ({ 
       ...prev, 
       status: "celebrating", 
       players: currentPlayers, 
@@ -672,7 +812,7 @@ export default function GanDengYan() {
     }));
     
     setTimeout(() => {
-      setState(prev => ({
+      setGameState(prev => ({
         ...prev,
         status: "scoring",
         scores: scoresUpdate
@@ -681,17 +821,15 @@ export default function GanDengYan() {
   }, [state.scores, calculateScores]);
 
   const nextTurn = useCallback((passed: boolean) => {
-    setState(currentState => {
+    setGameState(currentState => {
         let nextIndex = (currentState.currentPlayerIndex + 1) % currentState.players.length;
         let nextPasses = passed ? currentState.passesInARow + 1 : 0;
         let nextDeck = [...currentState.deck];
         let nextPlayers = [...currentState.players];
         let roundWinner = currentState.lastWinnerIndex;
 
-        // Visual
         nextPlayers[currentState.currentPlayerIndex].lastAction = passed ? "PASS" : "PLAY";
 
-        // Round Over Check
         if (nextPasses >= currentState.players.length - 1) {
             const lastPlay = currentState.tablePile[currentState.tablePile.length - 1];
             if (lastPlay) roundWinner = lastPlay.playerId;
@@ -732,7 +870,7 @@ export default function GanDengYan() {
   const playHand = useCallback((cards: Card[], analysis: any) => {
     audio.playCard();
     
-    setState(prev => {
+    setGameState(prev => {
         const playerIndex = prev.currentPlayerIndex;
         const newPlayers = [...prev.players];
         const player = newPlayers[playerIndex];
@@ -759,7 +897,7 @@ export default function GanDengYan() {
 
         if (player.cardsLeft === 0) {
             handleWin(playerIndex, newBombCount, newPlayers, playedHand);
-            return prev; // State update handled by handleWin
+            return prev; 
         }
 
         const nextIdx = (playerIndex + 1) % newPlayers.length;
@@ -777,9 +915,10 @@ export default function GanDengYan() {
     setSelectedCardIds([]);
   }, [handleWin, triggerBombToast]);
 
-  // AI Turn Effect
+  // AI Turn Logic (Only Host runs this)
   useEffect(() => {
     if (state.status !== "playing") return;
+    if (!state.isHost) return; // Only host runs AI
 
     const currentPlayer = state.players[state.currentPlayerIndex];
     if (currentPlayer.isAi) {
@@ -799,79 +938,83 @@ export default function GanDengYan() {
     return () => {
       if (aiTimeoutRef.current) clearTimeout(aiTimeoutRef.current);
     };
-  }, [state.currentPlayerIndex, state.status, state.players, state.tablePile, nextTurn, playHand]); 
+  }, [state.currentPlayerIndex, state.status, state.players, state.tablePile, nextTurn, playHand, state.isHost]); 
 
+  // Interaction Handlers
   const handleUserPlay = () => {
-    const player = state.players[0];
-    const selectedCards = player.hand.filter(c => selectedCardIds.includes(c.id));
+    // If Guest, send network request
+    const me = state.players[state.myPlayerId || 0];
+    const selectedCards = me.hand.filter(c => selectedCardIds.includes(c.id));
     
     const analysis = analyzeHand(selectedCards);
-    if (!analysis) {
-      showMessage("牌型无效！", 1500);
-      return;
-    }
+    if (!analysis) { showMessage("牌型无效！", 1500); return; }
 
     const lastHand = state.tablePile.length > 0 ? state.tablePile[state.tablePile.length - 1] : null;
-    if (lastHand && !canBeat(analysis, lastHand)) {
-      showMessage("打不过！需大一级。", 1500);
-      return;
-    }
+    if (lastHand && !canBeat(analysis, lastHand)) { showMessage("打不过！需大一级。", 1500); return; }
 
-    playHand(selectedCards, analysis);
+    if (state.isHost) {
+        playHand(selectedCards, analysis);
+    } else {
+        connections[0].send({ type: "ACTION_PLAY", cards: selectedCards, analysis });
+        setSelectedCardIds([]);
+    }
   };
 
   const handleUserPass = () => {
     audio.playPass();
-    if (state.tablePile.length === 0) {
-      showMessage("你必须出牌，不能过！", 1500);
-      return;
+    if (state.tablePile.length === 0) { showMessage("你必须出牌，不能过！", 1500); return; }
+    
+    if (state.isHost) {
+        nextTurn(true);
+    } else {
+        connections[0].send({ type: "ACTION_PASS" });
     }
-    nextTurn(true);
     setSelectedCardIds([]);
   };
 
   const toggleCardSelect = useCallback((id: string) => {
-    // Only allow selecting own cards when it's turn
-    setState(prev => {
-        if (prev.currentPlayerIndex !== 0) return prev;
-        return prev;
-    });
-    
-    // Check if it's actually user's turn in a separate check or trust UI state
-    // We'll trust UI state for simplicity but only play sound
+    if (state.currentPlayerIndex !== (state.myPlayerId || 0)) return;
     audio.playClick();
-    setSelectedCardIds(prev => 
-      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
-    );
-  }, []);
+    setSelectedCardIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  }, [state.currentPlayerIndex, state.myPlayerId]);
 
   const getOpponentPositionStyle = (id: number, totalPlayers: number) => {
-    if (totalPlayers === 2) return "pos-top";
-    if (totalPlayers === 3) return id === 1 ? "pos-right" : "pos-left";
+    const myId = state.myPlayerId || 0;
+    const visualId = (id - myId + totalPlayers) % totalPlayers;
+    
+    if (totalPlayers === 2) return "pos-top"; // Vis 1
+    
+    if (totalPlayers === 3) {
+        return visualId === 1 ? "pos-right" : "pos-left";
+    }
+    
     if (totalPlayers === 4) {
-        if (id === 1) return "pos-right";
-        if (id === 2) return "pos-top";
+        if (visualId === 1) return "pos-right";
+        if (visualId === 2) return "pos-top";
         return "pos-left";
     }
+    
     if (totalPlayers === 5) {
-        if (id === 1) return "pos-right-low";
-        if (id === 2) return "pos-right-high";
-        if (id === 3) return "pos-left-high";
+        if (visualId === 1) return "pos-right-low";
+        if (visualId === 2) return "pos-right-high";
+        if (visualId === 3) return "pos-left-high";
         return "pos-left-low";
     }
+    
     if (totalPlayers === 6) {
-        if (id === 1) return "pos-right-low";
-        if (id === 2) return "pos-right-high";
-        if (id === 3) return "pos-top";
-        if (id === 4) return "pos-left-high";
+        if (visualId === 1) return "pos-right-low";
+        if (visualId === 2) return "pos-right-high";
+        if (visualId === 3) return "pos-top";
+        if (visualId === 4) return "pos-left-high";
         return "pos-left-low";
     }
+    
     if (totalPlayers === 7) {
-        if (id === 1) return "pos-right-low";
-        if (id === 2) return "pos-right-high";
-        if (id === 3) return "pos-top-right";
-        if (id === 4) return "pos-top-left";
-        if (id === 5) return "pos-left-high";
+        if (visualId === 1) return "pos-right-low";
+        if (visualId === 2) return "pos-right-high";
+        if (visualId === 3) return "pos-top-right";
+        if (visualId === 4) return "pos-top-left";
+        if (visualId === 5) return "pos-left-high";
         return "pos-left-low";
     }
     return "pos-top";
@@ -879,13 +1022,40 @@ export default function GanDengYan() {
 
   // --- RENDER ---
 
-  if (state.status === "lobby") {
+  const myId = state.myPlayerId || 0;
+  const user = state.players[myId] || { hand: [], lastAction: null }; 
+
+  if (state.status === "lobby" || state.status === "waiting") {
     return (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", background: "#1b5e20", gap: "20px" }}>
         <h1 style={{ fontSize: "4rem", color: "#fbc02d", textShadow: "2px 2px 4px black", margin: 0 }}>干瞪眼</h1>
         <h2 style={{ color: "#fff", opacity: 0.8 }}>Gan Deng Yan Poker</h2>
         
         <div style={{ background: "rgba(0,0,0,0.3)", padding: "30px", borderRadius: "10px", display: "flex", flexDirection: "column", gap: "10px", alignItems: "center", minWidth: "300px" }}>
+          
+          {state.status === "waiting" ? (
+             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "15px" }}>
+                <h3 style={{ margin: 0, color: "#fff", opacity: 0.8 }}>房间号</h3>
+                <div style={{ background: "transparent", padding: "10px", border: "3px dashed #fbc02d", borderRadius: "10px" }}>
+                    <h1 style={{ margin: 0, fontSize: "6rem", color: "#fbc02d", letterSpacing: "5px", lineHeight: 1 }}>{hostRoomId}</h1>
+                </div>
+                <div style={{ color: "#ddd" }}>已加入玩家 ({state.players.length}人):</div>
+                <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", justifyContent: "center" }}>
+                    {state.players.map(p => (
+                        <div key={p.id} style={{ background: "rgba(255,255,255,0.2)", padding: "5px 10px", borderRadius: "5px" }}>
+                            {p.name} {p.id === 0 ? "(房主)" : ""}
+                        </div>
+                    ))}
+                </div>
+                {state.isHost ? (
+                    <button onClick={() => startGame(0)} style={{ padding: "10px 30px", background: "#4caf50", border: "none", borderRadius: "20px", fontSize: "1.2rem", color: "white", marginTop: "10px" }}>开始游戏</button>
+                ) : (
+                    <div style={{ color: "#aaa" }}>等待房主开始...</div>
+                )}
+                <button onClick={() => window.location.reload()} style={{ color: "#ccc", background: "none", border: "none", textDecoration: "underline" }}>退出</button>
+             </div>
+          ) : (
+          <>
           {lobbyStep === "MAIN" && (
             <div style={{ display: "flex", flexDirection: "column", gap: "20px", width: "100%", alignItems: "center" }}>
                <button 
@@ -895,8 +1065,8 @@ export default function GanDengYan() {
                  单机对战
                </button>
                <button 
-                 disabled
-                 style={{ padding: "15px 40px", fontSize: "1.5rem", background: "#757575", border: "none", borderRadius: "30px", cursor: "not-allowed", fontWeight: "bold", opacity: 0.7, width: "240px" }}
+                 onClick={() => { audio.init(); setLobbyStep("NICKNAME"); audio.playClick(); }}
+                 style={{ padding: "15px 40px", fontSize: "1.5rem", background: "#039be5", border: "none", borderRadius: "30px", cursor: "pointer", fontWeight: "bold", boxShadow: "0 4px 0 #0277bd", width: "240px", color: "white" }}
                >
                  多人联机
                </button>
@@ -905,7 +1075,7 @@ export default function GanDengYan() {
 
           {lobbyStep === "SELECT_COUNT" && (
              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "20px" }}>
-                <h3 style={{ margin: 0 }}>选择人数</h3>
+                <h3 style={{ margin: 0 }}>选择AI人数</h3>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px" }}>
                    {[2,3,4,5,6,7].map(num => (
                      <button
@@ -917,19 +1087,56 @@ export default function GanDengYan() {
                      </button>
                    ))}
                 </div>
-                <button 
-                  onClick={() => { setLobbyStep("MAIN"); audio.playClick(); }}
-                  style={{ background: "transparent", border: "none", color: "#ccc", marginTop: "10px", cursor: "pointer", textDecoration: "underline" }}
-                >
-                  返回
-                </button>
+                <button onClick={() => setLobbyStep("MAIN")} style={{ background: "transparent", border: "none", color: "#ccc", marginTop: "10px", textDecoration: "underline" }}>返回</button>
              </div>
+          )}
+
+          {lobbyStep === "NICKNAME" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "15px", alignItems: "center" }}>
+                  <h3 style={{ margin: 0 }}>请输入昵称</h3>
+                  <input 
+                    type="text" placeholder="你的名字" 
+                    value={nickname} onChange={e => setNickname(e.target.value.slice(0, 8))}
+                    style={{ padding: "10px", fontSize: "1.5rem", width: "200px", textAlign: "center", borderRadius: "5px", border: "none" }}
+                  />
+                  <button 
+                    onClick={() => { if(nickname.trim()) setLobbyStep("MULTI_LOBBY"); else showMessage("请输入昵称", 1000); }} 
+                    style={{ padding: "10px 30px", background: "#fbc02d", border: "none", borderRadius: "20px", fontSize: "1.2rem", fontWeight: "bold" }}
+                  >
+                    下一步
+                  </button>
+                  <button onClick={() => setLobbyStep("MAIN")} style={{ background: "transparent", border: "none", color: "#ccc", textDecoration: "underline" }}>返回</button>
+              </div>
+          )}
+
+          {lobbyStep === "MULTI_LOBBY" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "15px", width: "100%", alignItems: "center" }}>
+                  <button onClick={createRoom} style={{ padding: "15px 40px", fontSize: "1.3rem", background: "#8bc34a", border: "none", borderRadius: "30px", width: "240px" }}>创建房间</button>
+                  <button onClick={() => setLobbyStep("JOIN_ROOM")} style={{ padding: "15px 40px", fontSize: "1.3rem", background: "#ff7043", border: "none", borderRadius: "30px", width: "240px" }}>加入房间</button>
+                  <button onClick={() => setLobbyStep("NICKNAME")} style={{ background: "transparent", border: "none", color: "#ccc", textDecoration: "underline" }}>返回</button>
+              </div>
+          )}
+
+          {lobbyStep === "JOIN_ROOM" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "15px", alignItems: "center" }}>
+                  <input 
+                    type="number" placeholder="输入4位房间号" 
+                    value={joinRoomId} onChange={e => setJoinRoomId(e.target.value)}
+                    style={{ padding: "10px", fontSize: "1.5rem", width: "150px", textAlign: "center", borderRadius: "5px", border: "none" }}
+                  />
+                  <button onClick={joinRoom} style={{ padding: "10px 30px", background: "#26c6da", border: "none", borderRadius: "20px", fontSize: "1.2rem" }}>进入</button>
+                  <button onClick={() => setLobbyStep("MULTI_LOBBY")} style={{ background: "transparent", border: "none", color: "#ccc", textDecoration: "underline" }}>返回</button>
+              </div>
+          )}
+          </>
           )}
         </div>
       </div>
     );
   }
 
+  // Common Game Render (same as before but using calculated myId)
+  
   if (state.status === "scoring") {
      return (
         <div className="full-screen-overlay">
@@ -937,37 +1144,25 @@ export default function GanDengYan() {
                background: "#2c3e50", 
                borderRadius: "16px", 
                boxShadow: "0 10px 30px rgba(0,0,0,0.5)", 
-               width: "90%", 
-               maxWidth: "500px", 
-               overflow: "hidden",
-               border: "2px solid #f1c40f",
-               display: "flex",
-               flexDirection: "column",
-               position: "relative"
+               width: "90%", maxWidth: "500px", overflow: "hidden",
+               border: "2px solid #f1c40f", display: "flex", flexDirection: "column", position: "relative"
            }}>
              <button
-               onClick={() => { setState(prev => ({ ...prev, status: "lobby", scores: {} })); audio.playClick(); }}
+               onClick={() => window.location.reload()}
                style={{
                  position: "absolute", top: "15px", right: "15px",
                  background: "rgba(0,0,0,0.2)", border: "none", color: "white",
                  width: "36px", height: "36px", borderRadius: "50%",
-                 cursor: "pointer", fontSize: "20px", display: "flex",
-                 alignItems: "center", justifyContent: "center", zIndex: 10
+                 cursor: "pointer", fontSize: "20px", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10
                }}
-             >
-               ✕
-             </button>
+             >✕</button>
 
              <div style={{ background: "#a06000", padding: "20px", textAlign: "center", color: "white", borderBottom: "1px solid #c98e1a" }}>
-                 <h2 style={{ margin: 0, fontSize: "2rem", fontWeight: "900", textShadow: "1px 1px 0px rgba(0,0,0,0.2)" }}>本局分数结算</h2>
+                 <h2 style={{ margin: 0, fontSize: "2rem", fontWeight: "900" }}>本局分数结算</h2>
              </div>
              
              <div style={{ padding: "20px", background: "#2c3e50", flex: 1 }}>
-               <div style={{ 
-                   display: "grid", gridTemplateColumns: "1.2fr 1.5fr 60px 60px", gap: "10px", 
-                   color: "#95a5a6", fontSize: "1rem", marginBottom: "15px", padding: "0 10px", 
-                   fontWeight: "bold", borderBottom: "1px solid #34495e", paddingBottom: "10px"
-               }}>
+               <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1.5fr 60px 60px", gap: "10px", color: "#95a5a6", fontSize: "1rem", marginBottom: "15px", paddingBottom: "10px", borderBottom: "1px solid #34495e", fontWeight: "bold" }}>
                   <span style={{ textAlign: "left" }}>玩家</span>
                   <span style={{ textAlign: "right" }}>详情</span>
                   <span style={{ textAlign: "right" }}>变动</span>
@@ -1004,11 +1199,7 @@ export default function GanDengYan() {
                     }
 
                     return (
-                       <div key={p.id} style={{ 
-                           display: "grid", gridTemplateColumns: "1.2fr 1.5fr 60px 60px", gap: "10px", alignItems: "center",
-                           background: isWinner ? "rgba(255, 193, 7, 0.2)" : "transparent",
-                           padding: "10px 10px", borderRadius: "8px", borderBottom: "1px solid #34495e"
-                       }}>
+                       <div key={p.id} style={{ display: "grid", gridTemplateColumns: "1.2fr 1.5fr 60px 60px", gap: "10px", alignItems: "center", background: isWinner ? "rgba(255, 193, 7, 0.2)" : "transparent", padding: "10px 10px", borderRadius: "8px", borderBottom: "1px solid #34495e" }}>
                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                             <span style={{ fontWeight: "bold", color: "white", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</span>
                             {isWinner && <span style={{ fontSize: "1.2rem" }}>🏆</span>}
@@ -1024,10 +1215,11 @@ export default function GanDengYan() {
              
              <div style={{ padding: "20px", textAlign: "center", background: "#2c3e50" }}>
                  <button 
-                   onClick={() => startGame(state.players.length)}
-                   style={{ padding: "15px 80px", fontSize: "1.3rem", cursor: "pointer", background: "#d4a017", border: "none", borderRadius: "10px", fontWeight: "bold", color: "white", boxShadow: "0 4px 0 #b38600" }}
+                   onClick={() => state.isHost && startGame(state.players.length)}
+                   disabled={!state.isHost}
+                   style={{ padding: "15px 80px", fontSize: "1.3rem", cursor: state.isHost ? "pointer" : "not-allowed", background: state.isHost ? "#d4a017" : "#7f8c8d", border: "none", borderRadius: "10px", fontWeight: "bold", color: "white", boxShadow: "0 4px 0 rgba(0,0,0,0.2)" }}
                  >
-                   下一局
+                   {state.isHost ? "下一局" : "等待房主..."}
                  </button>
              </div>
            </div>
@@ -1035,47 +1227,26 @@ export default function GanDengYan() {
      );
   }
 
-  const user = state.players[0];
-  const opponents = state.players.filter(p => p.id !== 0);
+  const opponents = state.players.filter(p => p.id !== myId);
   const cardCount = user.hand.length;
   const squeeze = cardCount <= 5 ? -40 : -40 - ((cardCount - 5) * 4);
   const cardOverlap = Math.max(-70, squeeze);
+  const isMyTurn = state.currentPlayerIndex === myId;
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", position: "relative", overflow: "hidden" }}>
       
-      {/* Top Right Controls */}
       <div style={{ position: "absolute", top: "10px", right: "10px", zIndex: 50, display: "flex", gap: "10px" }}>
-        <button
-          onClick={toggleMute}
-          aria-label="Toggle Sound"
-          style={{ 
-              background: "rgba(0,0,0,0.4)", color: "white", border: "2px solid white", borderRadius: "50%", 
-              width: "40px", height: "40px", display: "flex", alignItems: "center", justifyContent: "center", 
-              cursor: "pointer", fontSize: "16px", boxShadow: "0 2px 4px rgba(0,0,0,0.2)"
-          }}
-        >
-          {muted ? "🔇" : "🔊"}
-        </button>
-        <button 
-          onClick={() => { setState(prev => ({ ...prev, status: "lobby", scores: {} })); audio.playClick(); }}
-          style={{ background: "rgba(0,0,0,0.4)", color: "white", border: "1px solid white", borderRadius: "20px", padding: "5px 15px", cursor: "pointer", height: "40px", fontWeight: "bold" }}
-        >
-          退出
-        </button>
+        <button onClick={toggleMute} style={{ background: "rgba(0,0,0,0.4)", color: "white", border: "2px solid white", borderRadius: "50%", width: "40px", height: "40px", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: "16px" }}>{muted ? "🔇" : "🔊"}</button>
+        <button onClick={() => window.location.reload()} style={{ background: "rgba(0,0,0,0.4)", color: "white", border: "1px solid white", borderRadius: "20px", padding: "5px 15px", cursor: "pointer", height: "40px", fontWeight: "bold" }}>退出</button>
       </div>
 
-      {/* Opponents Area */}
       <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: "180px", pointerEvents: "none" }}>
         {opponents.map((opp) => {
           const posClass = getOpponentPositionStyle(opp.id, state.players.length);
-          const avatar = BOT_AVATARS[(opp.id - 1) % BOT_AVATARS.length];
+          const avatar = BOT_AVATARS[(opp.id - 1) % BOT_AVATARS.length] || "👤";
           return (
-            <div key={opp.id} className={`opponent-container ${posClass}`} style={{ 
-               opacity: state.currentPlayerIndex === opp.id ? 1 : 0.7,
-               transform: state.currentPlayerIndex === opp.id ? "scale(1.15)" : "scale(1)",
-               zIndex: 10 
-            }}>
+            <div key={opp.id} className={`opponent-container ${posClass}`} style={{ opacity: state.currentPlayerIndex === opp.id ? 1 : 0.7, transform: state.currentPlayerIndex === opp.id ? "scale(1.15)" : "scale(1)", zIndex: 10 }}>
               <div style={{ position: "relative" }}>
                  <div style={{ width: "50px", height: "50px", borderRadius: "50%", background: opp.color, display: "flex", alignItems: "center", justifyContent: "center", border: state.currentPlayerIndex === opp.id ? "3px solid #fbc02d" : "2px solid #fff", color: "white", fontSize: "28px", boxShadow: "0 2px 4px rgba(0,0,0,0.3)" }}>{avatar}</div>
                  {opp.lastAction === "PASS" && <div className="pass-bubble">不要</div>}
@@ -1087,7 +1258,6 @@ export default function GanDengYan() {
         })}
       </div>
 
-      {/* Main Table Area */}
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
         <div style={{ display: "flex", marginLeft: "-36px", transform: "scale(1.2)" }}>
           {state.tablePile.length === 0 ? (
@@ -1111,19 +1281,18 @@ export default function GanDengYan() {
         </div>
       </div>
 
-      {/* User Area */}
       <div style={{ height: "180px", display: "flex", flexDirection: "column", justifyContent: "flex-end", paddingBottom: "10px", background: "linear-gradient(to top, rgba(0,0,0,0.6), transparent)", zIndex: 20, position: "relative" }}>
          
          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "20px", marginBottom: "10px", position: "relative", width: "100%" }}>
-            {user.lastAction === "PASS" && state.currentPlayerIndex !== 0 && (
+            {user.lastAction === "PASS" && !isMyTurn && (
                  <div className="pass-bubble" style={{ position: "absolute", top: "-40px", left: "50%", transform: "translateX(-50%)" }}>不要</div>
             )}
 
-            {state.currentPlayerIndex === 0 && state.status === 'playing' && (
+            {isMyTurn && state.status === 'playing' && (
               <>
                 <button 
                   onClick={handleUserPass}
-                  disabled={state.tablePile.length === 0 && state.lastWinnerIndex === 0}
+                  disabled={state.tablePile.length === 0 && state.lastWinnerIndex === myId}
                   style={{ padding: "10px 30px", background: "#e0e0e0", border: "none", borderRadius: "20px", fontWeight: "bold", fontSize: "1rem", cursor: "pointer", boxShadow: "0 2px 0 #9e9e9e" }}
                 >
                   不要
