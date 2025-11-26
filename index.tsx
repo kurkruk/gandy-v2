@@ -514,6 +514,9 @@ export default function GanDengYan() {
   const connectionsRef = useRef<DataConnection[]>([]);
   const [joinRoomId, setJoinRoomId] = useState("");
   const [hostRoomId, setHostRoomId] = useState("");
+  
+  // Network Logs
+  const [netLogs, setNetLogs] = useState<string[]>([]);
 
   const aiTimeoutRef = useRef<number | null>(null);
   const msgTimeoutRef = useRef<number | null>(null);
@@ -521,6 +524,11 @@ export default function GanDengYan() {
   useEffect(() => {
     connectionsRef.current = connections;
   }, [connections]);
+  
+  const addLog = (msg: string) => {
+      const time = new Date().toLocaleTimeString();
+      setNetLogs(prev => [`[${time}] ${msg}`, ...prev].slice(0, 10)); // Keep last 10 logs
+  };
   
   const toggleMute = () => {
     const next = !muted;
@@ -548,18 +556,22 @@ export default function GanDengYan() {
 
   const initNetwork = useCallback(() => {
     if (peer) return peer;
+    addLog("初始化P2P网络...");
     const newPeer = new Peer();
     
     newPeer.on('open', (id) => {
       setMyPeerId(id);
+      addLog("P2P网络就绪，ID获取成功");
     });
 
     newPeer.on('connection', (conn) => {
+      addLog(`收到连接请求: ${conn.peer}`);
       // Logic for Host receiving connections
       conn.on('data', (data: any) => {
          handleNetworkData(data, conn);
       });
       conn.on('open', () => {
+         addLog("连接握手成功");
          setConnections(prev => [...prev, conn]);
          // Wait for PLAYER_JOIN to add player
       });
@@ -567,6 +579,7 @@ export default function GanDengYan() {
 
     newPeer.on('error', (err) => {
         console.error(err);
+        addLog(`错误: ${err.type}`);
         showMessage("网络连接错误", 2000);
     });
 
@@ -589,6 +602,7 @@ export default function GanDengYan() {
 
       // Host receiving Join
       if (data.type === "PLAYER_JOIN") {
+         addLog(`玩家 ${data.name} 加入`);
          setGameState(prev => {
              // Deduplicate
              if (prev.players.some(p => p.peerId === data.peerId)) return prev;
@@ -649,17 +663,20 @@ export default function GanDengYan() {
   };
 
   const createRoom = () => {
+      addLog("正在创建房间...");
       const p = initNetwork();
       if (!p) return;
       
       const simpleId = Math.floor(1000 + Math.random() * 9000).toString();
       const fullId = APP_ID_PREFIX + simpleId;
       
+      addLog(`尝试注册房间ID: ${simpleId}`);
       const hostPeer = new Peer(fullId);
       
       hostPeer.on('open', (id) => {
           setMyPeerId(id);
           setHostRoomId(simpleId);
+          addLog("房间创建成功！等待玩家...");
           setState({
               ...state,
               status: "waiting",
@@ -681,6 +698,7 @@ export default function GanDengYan() {
       });
       
       hostPeer.on('connection', (conn) => {
+          addLog(`有连接进入...`);
           conn.on('data', (d: any) => handleNetworkData(d, conn));
           conn.on('open', () => {
              setConnections(prev => [...prev, conn]);
@@ -688,6 +706,7 @@ export default function GanDengYan() {
       });
       
       hostPeer.on('error', (e) => {
+         addLog(`错误: ${e.type}`);
          showMessage("创建房间失败(ID冲突)，请重试", 2000);
       });
       
@@ -699,18 +718,25 @@ export default function GanDengYan() {
           showMessage("请输入4位房间号", 1000);
           return;
       }
+      setNetLogs([]);
+      addLog(`正在查找房间: ${joinRoomId}...`);
+      
       const fullId = APP_ID_PREFIX + joinRoomId;
       const guestPeer = new Peer();
       
       guestPeer.on('open', (id) => {
           setMyPeerId(id);
+          addLog("本地连接就绪，尝试连接房主...");
           const conn = guestPeer.connect(fullId);
+          
           conn.on('open', () => {
+             addLog("已连接到房主！发送加入请求...");
              showMessage("已连接房主！加入中...", 2000);
              conn.send({ type: "PLAYER_JOIN", name: nickname || "玩家", peerId: id });
           });
           conn.on('data', (data: any) => {
              if (data.type === "SYNC_STATE") {
+                 addLog("收到同步数据");
                  const s = data.state as GameState;
                  const me = s.players.find(p => p.peerId === guestPeer.id); 
                  setState({ ...s, isHost: false, myPlayerId: me ? me.id : -1 });
@@ -720,13 +746,16 @@ export default function GanDengYan() {
              }
           });
           conn.on('close', () => {
+              addLog("连接已断开");
               showMessage("房主已断开", 3000);
               setState(prev => ({...prev, status: 'lobby'}));
           });
+          conn.on('error', (e) => addLog(`连接错误: ${e}`));
           setConnections([conn]); 
       });
       
-      guestPeer.on('error', () => {
+      guestPeer.on('error', (e) => {
+          addLog(`Peer错误: ${e.type}`);
           showMessage("找不到房间或连接失败", 2000);
       });
       
@@ -1103,6 +1132,11 @@ export default function GanDengYan() {
                     <div style={{ color: "#aaa" }}>等待房主开始...</div>
                 )}
                 <button onClick={() => window.location.reload()} style={{ color: "#ccc", background: "none", border: "none", textDecoration: "underline" }}>退出</button>
+                
+                {/* Network Logs Console */}
+                <div style={{ width: "100%", background: "rgba(0,0,0,0.8)", color: "#0f0", fontFamily: "monospace", fontSize: "10px", padding: "5px", borderRadius: "4px", height: "80px", overflowY: "auto", marginTop: "10px" }}>
+                    {netLogs.map((log, i) => <div key={i}>{log}</div>)}
+                </div>
              </div>
           ) : (
           <>
@@ -1164,6 +1198,12 @@ export default function GanDengYan() {
                   <button onClick={createRoom} style={{ padding: "15px 40px", fontSize: "1.3rem", background: "#8bc34a", border: "none", borderRadius: "30px", width: "240px" }}>创建房间</button>
                   <button onClick={() => setLobbyStep("JOIN_ROOM")} style={{ padding: "15px 40px", fontSize: "1.3rem", background: "#ff7043", border: "none", borderRadius: "30px", width: "240px" }}>加入房间</button>
                   <button onClick={() => setLobbyStep("NICKNAME")} style={{ background: "transparent", border: "none", color: "#ccc", textDecoration: "underline" }}>返回</button>
+                  
+                  {/* Network Logs Console */}
+                  <div style={{ width: "100%", background: "rgba(0,0,0,0.8)", color: "#0f0", fontFamily: "monospace", fontSize: "10px", padding: "5px", borderRadius: "4px", height: "80px", overflowY: "auto", marginTop: "5px" }}>
+                    {netLogs.length === 0 && <div style={{color: "#555"}}>网络日志...</div>}
+                    {netLogs.map((log, i) => <div key={i}>{log}</div>)}
+                  </div>
               </div>
           )}
 
@@ -1176,6 +1216,12 @@ export default function GanDengYan() {
                   />
                   <button onClick={joinRoom} style={{ padding: "10px 30px", background: "#26c6da", border: "none", borderRadius: "20px", fontSize: "1.2rem" }}>进入</button>
                   <button onClick={() => setLobbyStep("MULTI_LOBBY")} style={{ background: "transparent", border: "none", color: "#ccc", textDecoration: "underline" }}>返回</button>
+                  
+                  {/* Network Logs Console */}
+                  <div style={{ width: "100%", background: "rgba(0,0,0,0.8)", color: "#0f0", fontFamily: "monospace", fontSize: "10px", padding: "5px", borderRadius: "4px", height: "80px", overflowY: "auto", marginTop: "5px" }}>
+                    {netLogs.length === 0 && <div style={{color: "#555"}}>网络日志...</div>}
+                    {netLogs.map((log, i) => <div key={i}>{log}</div>)}
+                  </div>
               </div>
           )}
           </>
