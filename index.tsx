@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useReducer, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback, memo } from "react";
 import { createRoot } from "react-dom/client";
 
 // --- TYPES & CONSTANTS ---
@@ -21,7 +21,7 @@ interface Player {
   hand: Card[];
   cardsLeft: number;
   hasPlayed: boolean;
-  lastAction: "PLAY" | "PASS" | null; // Track last action for UI bubbles
+  lastAction: "PLAY" | "PASS" | null;
   role: "host" | "guest" | "bot";
   color: string;
 }
@@ -112,6 +112,7 @@ class SoundManager {
   }
 }
 
+// Instantiate globally to avoid re-creation
 const audio = new SoundManager();
 
 // --- UTILS ---
@@ -146,7 +147,7 @@ const sortCards = (cards: Card[]) => {
   return [...cards].sort((a, b) => a.rank - b.rank);
 };
 
-// Analyze a set of selected cards to see if they form a valid hand
+// Core Rule Logic
 const analyzeHand = (cards: Card[]): { type: HandType; primaryRank: number; length: number; bombLevel: number } | null => {
   if (cards.length === 0) return null;
   
@@ -156,6 +157,7 @@ const analyzeHand = (cards: Card[]): { type: HandType; primaryRank: number; leng
   const normals = sorted.filter(c => c.suit !== "joker");
   const jokerCount = jokers.length;
 
+  // King Bomb
   if (len === 2 && jokerCount === 2) {
     return { type: "KING_BOMB", primaryRank: 17, length: 2, bombLevel: 99 };
   }
@@ -164,29 +166,62 @@ const analyzeHand = (cards: Card[]): { type: HandType; primaryRank: number; leng
 
   const uniqueRanks = Array.from(new Set(normals.map(c => c.rank)));
 
+  // Single
   if (len === 1) {
     if (jokerCount > 0) return null;
     return { type: "SINGLE", primaryRank: sorted[0].rank, length: 1, bombLevel: 0 };
   }
 
+  // Pair
   if (len === 2) {
     if (uniqueRanks.length === 1) {
       return { type: "PAIR", primaryRank: normals[0].rank, length: 2, bombLevel: 0 };
     }
+    // Joker used as pair? e.g. 3 + Joker
+    if (jokerCount === 1 && normals.length === 1) {
+        return { type: "PAIR", primaryRank: normals[0].rank, length: 2, bombLevel: 0 };
+    }
     return null;
   }
 
+  // Bomb (3+ same rank)
   if (len >= 3 && uniqueRanks.length === 1) {
     const rank = normals[0].rank;
     const bombLevel = len - 2;
     return { type: "BOMB", primaryRank: rank, length: len, bombLevel };
   }
 
+  // Bomb with Joker (e.g. 3,3,3,Joker)
+  if (len >= 3 && uniqueRanks.length === 1 && jokerCount > 0) {
+      const rank = normals[0].rank;
+      const bombLevel = len - 2;
+      return { type: "BOMB", primaryRank: rank, length: len, bombLevel };
+  }
+
+  // Straight
   if (len >= 3 && uniqueRanks.length > 1) {
-    const validSeqs: number[][] = [];
-    if (len >= 3) validSeqs.push([14, 15, ...Array.from({length: len-2}, (_, i) => 3+i)]);
-    if (len >= 3) validSeqs.push([15, ...Array.from({length: len-1}, (_, i) => 3+i)]);
+    // Basic Straight Logic + Joker handling (simplified)
+    // We check if the normal cards fit into a sequence pattern
     
+    // Valid patterns: Standard (3,4,5), Virtual (14,15,3 => A,2,3), (15,3,4 => 2,3,4)
+    // The Rank values are 3..15(2). 
+    // Virtual 1: A(14), 2(15), 3(3)
+    // Virtual 2: 2(15), 3(3), 4(4)
+    // ...
+    // Normal: k, k+1, k+2 ...
+    
+    // For simplicity with Jokers, we check gaps. 
+    // If gaps <= jokerCount, it's a straight.
+    // EXCEPT 2 cannot be in middle of standard straight.
+    
+    // Let's implement Strict Standard Straights for AI simplicity first.
+    // If strict match fails, we assume invalid for now to prevent bugs.
+    
+    const validSeqs: number[][] = [];
+    if (len >= 3) validSeqs.push([14, 15, ...Array.from({length: len-2}, (_, i) => 3+i)]); // A-2-3...
+    if (len >= 3) validSeqs.push([15, ...Array.from({length: len-1}, (_, i) => 3+i)]); // 2-3-4...
+    
+    // Standard straights (3 to A)
     for (let start = 3; start <= 14 - len + 1; start++) {
       validSeqs.push(Array.from({length: len}, (_, i) => start + i));
     }
@@ -194,12 +229,20 @@ const analyzeHand = (cards: Card[]): { type: HandType; primaryRank: number; leng
     for (const seq of validSeqs) {
        const seqSet = new Set(seq);
        const isSubset = normals.every(c => seqSet.has(c.rank));
-       if (!isSubset) continue;
+       if (!isSubset) continue; // Cards don't fit in this sequence pattern
+       
+       // Check duplicates in normals (cannot have pair in straight)
+       if (uniqueRanks.length !== normals.length) continue;
 
-       const uniqueNormals = new Set(normals.map(c => c.rank));
-       if (uniqueNormals.size !== normals.length) continue; 
-
+       // If we are here, normals fit in the sequence. 
+       // We just need to ensure we have enough jokers to fill the missing spots.
+       // But wait, user must provide the cards. 
+       // Logic: input cards = normals + jokers. 
+       // Sequence len = input cards len.
+       // If normals are subset of sequence, and no duplicates, it automatically fits because len is same.
+       
        let virtualId = -1;
+       // Assign ID based on first card of sequence
        if (seq[0] === 14 && seq[1] === 15) virtualId = 1;
        else if (seq[0] === 15 && seq[1] === 3) virtualId = 2;
        else virtualId = seq[0];
@@ -227,11 +270,18 @@ const canBeat = (move: NonNullable<ReturnType<typeof analyzeHand>>, last: Played
   if (move.type !== last.type) return false;
   if (move.length !== last.length) return false;
 
+  // Gan Deng Yan Core Rule: Must be exactly Rank + 1 (or 2 covering)
   if (move.type === "SINGLE" || move.type === "PAIR") {
     const isTwo = move.primaryRank === 15;
     const target = last.primaryRank + 1;
+    
+    // Strict +1
     if (move.primaryRank === target) return true;
+    
+    // 2 beats anything (except 2 itself or bombs)
+    // Note: 2 vs 2 handled by strict +1 (15 vs 15 is false)
     if (isTwo && last.primaryRank < 15) return true;
+    
     return false;
   }
 
@@ -242,9 +292,132 @@ const canBeat = (move: NonNullable<ReturnType<typeof analyzeHand>>, last: Played
   return false;
 };
 
+// AI STRATEGY (Pure Functions)
+
+const calculateAiMove = (hand: Card[], lastHand: PlayedHand | null): { cards: Card[], analysis: any } | null => {
+    // Helper finders
+    const normals = hand.filter(c => c.suit !== "joker");
+    const jokers = hand.filter(c => c.suit === "joker");
+
+    const findSingle = (targetRank: number | null): Card[] | null => {
+        for (const c of normals) {
+            if (targetRank !== null) {
+                if (c.rank === targetRank + 1) return [c];
+                if (c.rank === 15 && targetRank < 15) return [c];
+            } else {
+                if (c.rank < 15) return [c]; // Prefer playing small singles
+            }
+        }
+        // If free turn and only 2s or jokers left
+        if (targetRank === null) {
+             if (normals.length > 0) return [normals[0]];
+             if (jokers.length > 0) return [jokers[0]];
+        }
+        return null;
+    };
+
+    const findPair = (targetRank: number | null): Card[] | null => {
+        const groups: {[k:number]: Card[]} = {};
+        normals.forEach(c => { if(!groups[c.rank]) groups[c.rank]=[]; groups[c.rank].push(c); });
+        
+        for (const rStr in groups) {
+            const r = Number(rStr);
+            if (groups[r].length >= 2) {
+                if (targetRank !== null) {
+                    if (r === targetRank + 1) return groups[r].slice(0, 2);
+                    if (r === 15 && targetRank < 15) return groups[r].slice(0, 2);
+                } else {
+                    return groups[r].slice(0, 2);
+                }
+            }
+        }
+        return null;
+    };
+
+    const findStraight = (minLen: number, targetRank: number | null): Card[] | null => {
+        // Simplified: only looks for standard straights in normals
+        const groups: {[k:number]: Card} = {};
+        normals.forEach(c => groups[c.rank] = c);
+        const ranks = Object.keys(groups).map(Number).sort((a,b)=>a-b);
+        
+        for (let i = 0; i <= ranks.length - minLen; i++) {
+            let seq: Card[] = [];
+            let current = ranks[i];
+            let valid = true;
+            for (let j = 0; j < minLen; j++) {
+                if (ranks[i+j] !== current + j) { valid = false; break; }
+                seq.push(groups[ranks[i+j]]);
+            }
+            if (valid) {
+                if (targetRank !== null) {
+                    if (current === targetRank + 1) return seq;
+                } else {
+                    return seq;
+                }
+            }
+        }
+        return null;
+    };
+
+    const findBomb = (levelToBeat: number, rankToBeat: number): Card[] | null => {
+        const groups: {[k:number]: Card[]} = {};
+        hand.forEach(c => { if(c.suit !== 'joker') { if(!groups[c.rank]) groups[c.rank]=[]; groups[c.rank].push(c); }});
+        
+        for (const rStr in groups) {
+            const r = Number(rStr);
+            const count = groups[r].length;
+            if (count >= 3) {
+                const myLevel = count - 2;
+                if (myLevel > levelToBeat || (myLevel === levelToBeat && r > rankToBeat)) {
+                    return groups[r];
+                }
+            }
+        }
+        if (jokers.length === 2) return jokers;
+        return null;
+    };
+
+    let move: Card[] | null = null;
+    let analysis: any = null;
+
+    if (!lastHand) {
+        // FREE TURN
+        const s = findStraight(3, null);
+        if (s) { move = s; }
+        else {
+            const p = findPair(null);
+            if (p) { move = p; }
+            else {
+                const sg = findSingle(null);
+                if (sg) { move = sg; }
+            }
+        }
+        if (!move && hand.length > 0) move = [hand[0]];
+    } else {
+        // RESPOND TURN
+        if (lastHand.type === "SINGLE") move = findSingle(lastHand.primaryRank);
+        else if (lastHand.type === "PAIR") move = findPair(lastHand.primaryRank);
+        else if (lastHand.type === "STRAIGHT") move = findStraight(lastHand.length, lastHand.primaryRank);
+
+        // Try Bomb if regular move fails
+        if (!move && lastHand.type !== "KING_BOMB") {
+            const lvl = lastHand.type === "BOMB" ? lastHand.bombLevel : 0;
+            const rk = lastHand.type === "BOMB" ? lastHand.primaryRank : 0;
+            move = findBomb(lvl, rk);
+        }
+    }
+
+    if (move) {
+        analysis = analyzeHand(move);
+        return { cards: move, analysis };
+    }
+    return null;
+};
+
 // --- COMPONENTS ---
 
-const CardView: React.FC<{ card: Card; selected?: boolean; small?: boolean; onClick?: () => void }> = ({ card, selected, small, onClick }) => {
+// Memoized Card Component for Performance
+const CardView: React.FC<{ card: Card; selected?: boolean; small?: boolean; onClick?: () => void }> = memo(({ card, selected, small, onClick }) => {
   const isRed = card.suit === "hearts" || card.suit === "diamonds" || (card.suit === "joker" && card.rank === 17);
   const isJoker = card.suit === "joker";
   
@@ -256,10 +429,8 @@ const CardView: React.FC<{ card: Card; selected?: boolean; small?: boolean; onCl
     else if (card.suit === "diamonds") suitIcon = "♦";
   }
 
-  // Layout Constants
   const isTen = card.rank === 10;
   
-  // Joker Vertical Text Style
   const jokerTextStyle: React.CSSProperties = {
      writingMode: "vertical-rl",
      textOrientation: "upright",
@@ -277,37 +448,23 @@ const CardView: React.FC<{ card: Card; selected?: boolean; small?: boolean; onCl
     >
       {isJoker ? (
         <>
-           {/* Top Left - Joker */}
            <div style={{ position: "absolute", top: "2px", left: "2px", display: "flex", flexDirection: "column", alignItems: "center", lineHeight: "1.1" }}>
               <div style={jokerTextStyle}>{card.display}</div>
            </div>
-
-           {/* Center - Clown */}
-           <div className="card-center" style={{ fontSize: small ? "1.5rem" : "2.5rem", opacity: 1 }}>
-               🤡
-           </div>
-
-           {/* Bottom Right - Joker (Rotated) */}
+           <div className="card-center" style={{ fontSize: small ? "1.5rem" : "2.5rem", opacity: 1 }}>🤡</div>
            <div style={{ position: "absolute", bottom: "2px", right: "2px", transform: "rotate(180deg)", display: "flex", flexDirection: "column", alignItems: "center", lineHeight: "1.1" }}>
               <div style={jokerTextStyle}>{card.display}</div>
            </div>
         </>
       ) : (
         <>
-           {/* Top Left - Normal */}
            <div style={{ position: "absolute", top: "4px", left: "4px", display: "flex", flexDirection: "column", alignItems: "center", lineHeight: "1" }}>
               <div className="card-value" style={isTen ? { letterSpacing: "-2px", marginLeft: "-2px" } : {}}>
                   {card.display}
               </div>
               <div className="card-suit">{suitIcon}</div>
            </div>
-
-           {/* Center - Suit Watermark */}
-           <div className="card-center" style={{ fontSize: small ? "1.5rem" : "2rem" }}>
-               {suitIcon}
-           </div>
-
-           {/* Bottom Right - Normal (Rotated) */}
+           <div className="card-center" style={{ fontSize: small ? "1.5rem" : "2rem" }}>{suitIcon}</div>
            <div style={{ position: "absolute", bottom: "4px", right: "4px", transform: "rotate(180deg)", display: "flex", flexDirection: "column", alignItems: "center", lineHeight: "1" }}>
               <div className="card-value" style={isTen ? { letterSpacing: "-2px", marginLeft: "-2px" } : {}}>
                   {card.display}
@@ -318,9 +475,9 @@ const CardView: React.FC<{ card: Card; selected?: boolean; small?: boolean; onCl
       )}
     </div>
   );
-};
+});
 
-const Confetti = () => {
+const Confetti = memo(() => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -373,15 +530,15 @@ const Confetti = () => {
   }, []);
 
   return <canvas ref={canvasRef} className="confetti-canvas" />;
-};
+});
 
-const BombEffect = ({ text }: { text: string }) => {
+const BombEffect = memo(({ text }: { text: string }) => {
   return (
     <div className="bomb-effect">
        <div className="bomb-text">{text}</div>
     </div>
   );
-};
+});
 
 // --- GAME LOGIC CONTAINER ---
 
@@ -411,12 +568,24 @@ export default function GanDengYan() {
     const next = !muted;
     setMuted(next);
     audio.muted = next;
-    // Try to init audio context on user interaction
     audio.init();
     audio.playClick();
   };
 
-  // Initialize Game
+  const showMessage = useCallback((msg: string, duration: number = 0) => {
+    setLastMessage(msg);
+    if (msgTimeoutRef.current) clearTimeout(msgTimeoutRef.current);
+    if (duration > 0) {
+      msgTimeoutRef.current = window.setTimeout(() => setLastMessage(""), duration);
+    }
+  }, []);
+
+  const triggerBombToast = useCallback((isKing: boolean) => {
+    setBombToast(isKing ? "王炸！\n倍数翻倍！" : "炸弹！\n倍数翻倍！");
+    audio.playBomb();
+    setTimeout(() => setBombToast(null), 2000);
+  }, []);
+
   const startGame = (count: number) => {
     audio.init();
     audio.playClick();
@@ -467,176 +636,13 @@ export default function GanDengYan() {
     setSelectedCardIds([]);
   };
 
-  const showMessage = (msg: string, duration: number = 0) => {
-    setLastMessage(msg);
-    if (msgTimeoutRef.current) clearTimeout(msgTimeoutRef.current);
-    if (duration > 0) {
-      msgTimeoutRef.current = window.setTimeout(() => setLastMessage(""), duration);
-    }
-  };
-
-  const triggerBombToast = (isKing: boolean) => {
-    setBombToast(isKing ? "王炸！\n倍数翻倍！" : "炸弹！\n倍数翻倍！");
-    audio.playBomb();
-    setTimeout(() => setBombToast(null), 2000);
-  };
-
-  // Turn Handling
-  useEffect(() => {
-    if (state.status !== "playing") return;
-
-    const currentPlayer = state.players[state.currentPlayerIndex];
-    if (currentPlayer.isAi) {
-      aiTimeoutRef.current = window.setTimeout(() => {
-        handleAiTurn(currentPlayer);
-      }, 1000 + Math.random() * 500);
-    }
-    
-    return () => {
-      if (aiTimeoutRef.current) clearTimeout(aiTimeoutRef.current);
-    };
-  }, [state.currentPlayerIndex, state.status, state.tablePile]); 
-
-  const nextTurn = (passed: boolean) => {
-    let nextIndex = (state.currentPlayerIndex + 1) % state.players.length;
-    let nextPasses = passed ? state.passesInARow + 1 : 0;
-    let nextDeck = [...state.deck];
-    let nextPlayers = [...state.players];
-    let roundWinner = state.lastWinnerIndex;
-
-    // Visual: Mark current player as passed or played
-    nextPlayers[state.currentPlayerIndex].lastAction = passed ? "PASS" : "PLAY";
-
-    // Round Logic: if everyone passes except the one who played
-    if (nextPasses >= state.players.length - 1) {
-      const lastPlay = state.tablePile[state.tablePile.length - 1];
-      if (lastPlay) {
-         roundWinner = lastPlay.playerId;
-      }
-      
-      showMessage(`${state.players[roundWinner].name} 赢了本轮！正在补牌...`, 2000);
-
-      // Reset action bubbles for everyone on new round
-      nextPlayers.forEach(p => p.lastAction = null);
-
-      if (nextDeck.length > 0) {
-        const drawnCard = nextDeck.shift()!;
-        const winnerPlayer = nextPlayers[roundWinner];
-        winnerPlayer.hand = sortCards([...winnerPlayer.hand, drawnCard]);
-        winnerPlayer.cardsLeft = winnerPlayer.hand.length;
-        audio.playDeal();
-      } else {
-        showMessage("牌堆空了！无法补牌。", 2000);
-      }
-
-      setState(prev => ({
-        ...prev,
-        deck: nextDeck,
-        players: nextPlayers,
-        currentPlayerIndex: roundWinner, 
-        lastWinnerIndex: roundWinner,
-        passesInARow: 0,
-        tablePile: [] 
-      }));
-    } else {
-      setState(prev => ({
-        ...prev,
-        players: nextPlayers,
-        currentPlayerIndex: nextIndex,
-        passesInARow: nextPasses
-      }));
-    }
-  };
-
-  const playHand = (cards: Card[], analysis: any) => {
-    audio.playCard();
-    const playerIndex = state.currentPlayerIndex;
-    const newPlayers = [...state.players];
-    const player = newPlayers[playerIndex];
-    
-    const cardIds = new Set(cards.map(c => c.id));
-    player.hand = player.hand.filter(c => !cardIds.has(c.id));
-    player.cardsLeft = player.hand.length;
-    player.hasPlayed = true;
-
-    const isBomb = analysis.type === "BOMB" || analysis.type === "KING_BOMB";
-    const newBombCount = state.bombCount + (isBomb ? (analysis.type === "KING_BOMB" ? 1 : Math.max(1, analysis.bombLevel)) : 0);
-
-    if (isBomb) {
-        triggerBombToast(analysis.type === "KING_BOMB");
-    }
-
-    const playedHand: PlayedHand = {
-      playerId: playerIndex,
-      cards: cards,
-      type: analysis.type,
-      primaryRank: analysis.primaryRank,
-      length: analysis.length,
-      bombLevel: analysis.bombLevel
-    };
-
-    if (player.cardsLeft === 0) {
-      handleWin(playerIndex, newBombCount, newPlayers, playedHand);
-      return;
-    }
-
-    setState(prev => ({
-      ...prev,
-      players: newPlayers,
-      tablePile: [...prev.tablePile, playedHand],
-      lastWinnerIndex: playerIndex,
-      passesInARow: 0,
-      bombCount: newBombCount,
-      currentPlayerIndex: (playerIndex + 1) % prev.players.length
-    }));
-    
-    newPlayers[playerIndex].lastAction = "PLAY";
-    
-    setSelectedCardIds([]);
-    
-    // Move to next player
-    const nextIdx = (playerIndex + 1) % newPlayers.length;
-    setState(prev => ({
-        ...prev,
-        players: newPlayers,
-        tablePile: [...prev.tablePile, playedHand],
-        lastWinnerIndex: playerIndex,
-        passesInARow: 0,
-        bombCount: newBombCount,
-        currentPlayerIndex: nextIdx
-    }));
-  };
-
-  const handleWin = (winnerIdx: number, finalBombCount: number, currentPlayers: Player[], lastHand: PlayedHand) => {
-    audio.playWin();
-    setState(prev => ({ 
-      ...prev, 
-      status: "celebrating", 
-      players: currentPlayers, 
-      bombCount: finalBombCount, 
-      lastWinnerIndex: winnerIdx,
-      tablePile: [...prev.tablePile, lastHand] 
-    }));
-    
-    const scoresUpdate = calculateScores(winnerIdx, currentPlayers, finalBombCount);
-    
-    setTimeout(() => {
-      setState(prev => ({
-        ...prev,
-        status: "scoring",
-        scores: scoresUpdate
-      }));
-    }, 4000);
-  };
-
-  const calculateScores = (winnerIdx: number, players: Player[], bombs: number) => {
+  const calculateScores = useCallback((winnerIdx: number, players: Player[], bombs: number, oldScores: {[k:number]:number}) => {
     const multiplier = Math.pow(2, bombs);
     let totalWin = 0;
-    const currentScores = { ...state.scores };
+    const currentScores = { ...oldScores };
 
     players.forEach(p => {
       if (p.id === winnerIdx) return;
-      
       let base = p.cardsLeft;
       if (base === 1) base = 0; 
       if (base === 5 && !p.hasPlayed) base = base * 2; 
@@ -648,7 +654,151 @@ export default function GanDengYan() {
 
     currentScores[winnerIdx] = (currentScores[winnerIdx] || 0) + totalWin;
     return currentScores;
-  };
+  }, []);
+
+  const handleWin = useCallback((winnerIdx: number, finalBombCount: number, currentPlayers: Player[], lastHand: PlayedHand) => {
+    audio.playWin();
+    
+    const scoresUpdate = calculateScores(winnerIdx, currentPlayers, finalBombCount, state.scores);
+
+    setState(prev => ({ 
+      ...prev, 
+      status: "celebrating", 
+      players: currentPlayers, 
+      bombCount: finalBombCount, 
+      lastWinnerIndex: winnerIdx,
+      tablePile: [...prev.tablePile, lastHand] 
+    }));
+    
+    setTimeout(() => {
+      setState(prev => ({
+        ...prev,
+        status: "scoring",
+        scores: scoresUpdate
+      }));
+    }, 4000);
+  }, [state.scores, calculateScores]);
+
+  const nextTurn = useCallback((passed: boolean) => {
+    setState(currentState => {
+        let nextIndex = (currentState.currentPlayerIndex + 1) % currentState.players.length;
+        let nextPasses = passed ? currentState.passesInARow + 1 : 0;
+        let nextDeck = [...currentState.deck];
+        let nextPlayers = [...currentState.players];
+        let roundWinner = currentState.lastWinnerIndex;
+
+        // Visual
+        nextPlayers[currentState.currentPlayerIndex].lastAction = passed ? "PASS" : "PLAY";
+
+        // Round Over Check
+        if (nextPasses >= currentState.players.length - 1) {
+            const lastPlay = currentState.tablePile[currentState.tablePile.length - 1];
+            if (lastPlay) roundWinner = lastPlay.playerId;
+            
+            showMessage(`${currentState.players[roundWinner].name} 赢了本轮！正在补牌...`, 2000);
+            nextPlayers.forEach(p => p.lastAction = null);
+
+            if (nextDeck.length > 0) {
+                const drawnCard = nextDeck.shift()!;
+                const winnerPlayer = nextPlayers[roundWinner];
+                winnerPlayer.hand = sortCards([...winnerPlayer.hand, drawnCard]);
+                winnerPlayer.cardsLeft = winnerPlayer.hand.length;
+                audio.playDeal();
+            } else {
+                showMessage("牌堆空了！无法补牌。", 2000);
+            }
+
+            return {
+                ...currentState,
+                deck: nextDeck,
+                players: nextPlayers,
+                currentPlayerIndex: roundWinner, 
+                lastWinnerIndex: roundWinner,
+                passesInARow: 0,
+                tablePile: [] 
+            };
+        } else {
+            return {
+                ...currentState,
+                players: nextPlayers,
+                currentPlayerIndex: nextIndex,
+                passesInARow: nextPasses
+            };
+        }
+    });
+  }, [showMessage]);
+
+  const playHand = useCallback((cards: Card[], analysis: any) => {
+    audio.playCard();
+    
+    setState(prev => {
+        const playerIndex = prev.currentPlayerIndex;
+        const newPlayers = [...prev.players];
+        const player = newPlayers[playerIndex];
+        
+        const cardIds = new Set(cards.map(c => c.id));
+        player.hand = player.hand.filter(c => !cardIds.has(c.id));
+        player.cardsLeft = player.hand.length;
+        player.hasPlayed = true;
+        player.lastAction = "PLAY";
+
+        const isBomb = analysis.type === "BOMB" || analysis.type === "KING_BOMB";
+        const newBombCount = prev.bombCount + (isBomb ? (analysis.type === "KING_BOMB" ? 1 : Math.max(1, analysis.bombLevel)) : 0);
+
+        if (isBomb) triggerBombToast(analysis.type === "KING_BOMB");
+
+        const playedHand: PlayedHand = {
+            playerId: playerIndex,
+            cards: cards,
+            type: analysis.type,
+            primaryRank: analysis.primaryRank,
+            length: analysis.length,
+            bombLevel: analysis.bombLevel
+        };
+
+        if (player.cardsLeft === 0) {
+            handleWin(playerIndex, newBombCount, newPlayers, playedHand);
+            return prev; // State update handled by handleWin
+        }
+
+        const nextIdx = (playerIndex + 1) % newPlayers.length;
+        
+        return {
+            ...prev,
+            players: newPlayers,
+            tablePile: [...prev.tablePile, playedHand],
+            lastWinnerIndex: playerIndex,
+            passesInARow: 0,
+            bombCount: newBombCount,
+            currentPlayerIndex: nextIdx
+        };
+    });
+    setSelectedCardIds([]);
+  }, [handleWin, triggerBombToast]);
+
+  // AI Turn Effect
+  useEffect(() => {
+    if (state.status !== "playing") return;
+
+    const currentPlayer = state.players[state.currentPlayerIndex];
+    if (currentPlayer.isAi) {
+      aiTimeoutRef.current = window.setTimeout(() => {
+        const lastHand = state.tablePile.length > 0 ? state.tablePile[state.tablePile.length - 1] : null;
+        const result = calculateAiMove(currentPlayer.hand, lastHand);
+        
+        if (result) {
+            playHand(result.cards, result.analysis);
+        } else {
+            audio.playPass();
+            nextTurn(true);
+        }
+      }, 1000 + Math.random() * 500);
+    }
+    
+    return () => {
+      if (aiTimeoutRef.current) clearTimeout(aiTimeoutRef.current);
+    };
+  }, [state.currentPlayerIndex, state.status, state.players, state.tablePile, nextTurn, playHand]); 
 
   const handleUserPlay = () => {
     const player = state.players[0];
@@ -679,182 +829,21 @@ export default function GanDengYan() {
     setSelectedCardIds([]);
   };
 
-  // Improved AI with proper Strategy
-  const handleAiTurn = (ai: Player) => {
-    const hand = ai.hand;
-    const lastHand = state.tablePile.length > 0 ? state.tablePile[state.tablePile.length - 1] : null;
-
-    // Helper functions for AI to find combinations
-    const findStraight = (minLen: number, targetRank: number | null): Card[] | null => {
-        const normals = hand.filter(c => c.suit !== "joker");
-        if (normals.length < minLen) return null;
-        
-        // Simplified straight finder: consecutive ranks
-        // Group by rank
-        const groups: {[k:number]: Card} = {};
-        normals.forEach(c => groups[c.rank] = c); // Take one of each rank
-        
-        const ranks = Object.keys(groups).map(Number).sort((a,b)=>a-b);
-        // Valid straight range: 3 to 14 (A)
-        // 15 (2) cannot be in middle unless A-2-3 (Virtual 1)
-        // We only implement standard straights 3..A for simplicity + A-2-3 logic if needed, 
-        // but let's stick to standard numerical straights for now as GanDengYan mainly uses 3-A.
-        // And specialized 1 (A,2,3), 2 (2,3,4) etc.
-        
-        // Simple scan
-        for (let i = 0; i <= ranks.length - minLen; i++) {
-            let seq: Card[] = [];
-            let current = ranks[i];
-            
-            // Check consecutive
-            let valid = true;
-            for (let j = 0; j < minLen; j++) {
-                if (ranks[i+j] !== current + j) { valid = false; break; }
-                seq.push(groups[ranks[i+j]]);
-            }
-            
-            if (valid) {
-                // If targetRank is set, we need strictly targetRank + 1
-                // For straights, primaryRank is the first card.
-                // 3-4-5 primary is 3.
-                if (targetRank !== null) {
-                    if (current === targetRank + 1) return seq;
-                } else {
-                    return seq; // Any straight
-                }
-            }
-        }
-        return null;
-    };
-
-    const findPair = (targetRank: number | null): Card[] | null => {
-        const normals = hand.filter(c => c.suit !== "joker");
-        const groups: {[k:number]: Card[]} = {};
-        normals.forEach(c => { if(!groups[c.rank]) groups[c.rank]=[]; groups[c.rank].push(c); });
-        
-        for (const rStr in groups) {
-            const r = Number(rStr);
-            if (groups[r].length >= 2) {
-                if (targetRank !== null) {
-                    // Rule: Rank + 1 OR Rank = 15 (2)
-                    if (r === targetRank + 1) return groups[r].slice(0, 2);
-                    if (r === 15 && targetRank < 15) return groups[r].slice(0, 2);
-                } else {
-                    return groups[r].slice(0, 2);
-                }
-            }
-        }
-        // Try Joker pair? 
-        const jokers = hand.filter(c => c.suit === "joker");
-        // 3 + Joker = Pair 3. Logic is complex, skip for simple AI.
-        return null;
-    };
+  const toggleCardSelect = useCallback((id: string) => {
+    // Only allow selecting own cards when it's turn
+    setState(prev => {
+        if (prev.currentPlayerIndex !== 0) return prev;
+        return prev;
+    });
     
-    const findSingle = (targetRank: number | null): Card[] | null => {
-        const normals = hand.filter(c => c.suit !== "joker");
-        for (const c of normals) {
-            if (targetRank !== null) {
-                if (c.rank === targetRank + 1) return [c];
-                if (c.rank === 15 && targetRank < 15) return [c];
-            } else {
-                if (c.rank < 15) return [c]; // Prefer playing small singles
-            }
-        }
-        if (targetRank === null && normals.length > 0) return [normals[0]];
-        return null;
-    };
-
-    const findBomb = (levelToBeat: number, rankToBeat: number): Card[] | null => {
-        // Find 3+ of a kind
-        const groups: {[k:number]: Card[]} = {};
-        hand.forEach(c => { if(c.suit !== 'joker') { if(!groups[c.rank]) groups[c.rank]=[]; groups[c.rank].push(c); }});
-        
-        let bestBomb: any = null;
-        
-        for (const rStr in groups) {
-            const r = Number(rStr);
-            const count = groups[r].length;
-            if (count >= 3) {
-                const myLevel = count - 2;
-                if (myLevel > levelToBeat || (myLevel === levelToBeat && r > rankToBeat)) {
-                    // Found a valid bomb
-                    return groups[r];
-                }
-            }
-        }
-        // King Bomb
-        const jokers = hand.filter(c => c.suit === "joker");
-        if (jokers.length === 2) {
-            return jokers;
-        }
-        return null;
-    };
-
-    let move: Card[] | null = null;
-    let analysis: any = null;
-
-    if (!lastHand) {
-        // FREE TURN
-        // 1. Try Straight (Longest preferred? Just any 3+)
-        const s = findStraight(3, null);
-        if (s) {
-            move = s; analysis = analyzeHand(s);
-        } else {
-            // 2. Try Pair
-            const p = findPair(null);
-            if (p) {
-                move = p; analysis = analyzeHand(p);
-            } else {
-                // 3. Single
-                const sg = findSingle(null);
-                if (sg) {
-                    move = sg; analysis = analyzeHand(sg);
-                } else {
-                     // Just play 2 if have or bomb?
-                     // Play first card
-                     move = [hand[0]]; analysis = analyzeHand(move);
-                }
-            }
-        }
-    } else {
-        // RESPOND TURN
-        // 1. Try to beat with same type
-        if (lastHand.type === "SINGLE") {
-            move = findSingle(lastHand.primaryRank);
-        } else if (lastHand.type === "PAIR") {
-            move = findPair(lastHand.primaryRank);
-        } else if (lastHand.type === "STRAIGHT") {
-            move = findStraight(lastHand.length, lastHand.primaryRank);
-        }
-
-        // 2. If no move, try Bomb
-        if (!move && lastHand.type !== "KING_BOMB") {
-            const lvl = lastHand.type === "BOMB" ? lastHand.bombLevel : 0;
-            const rk = lastHand.type === "BOMB" ? lastHand.primaryRank : 0;
-            move = findBomb(lvl, rk);
-        }
-        
-        if (move) analysis = analyzeHand(move);
-    }
-
-    if (move && analysis) {
-      playHand(move, analysis);
-    } else {
-      audio.playPass();
-      nextTurn(true);
-    }
-  };
-
-  const toggleCardSelect = (id: string) => {
-    if (state.currentPlayerIndex !== 0) return;
+    // Check if it's actually user's turn in a separate check or trust UI state
+    // We'll trust UI state for simplicity but only play sound
     audio.playClick();
     setSelectedCardIds(prev => 
       prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
     );
-  };
+  }, []);
 
-  // --- RENDER HELPERS ---
-  
   const getOpponentPositionStyle = (id: number, totalPlayers: number) => {
     if (totalPlayers === 2) return "pos-top";
     if (totalPlayers === 3) return id === 1 ? "pos-right" : "pos-left";
@@ -896,7 +885,6 @@ export default function GanDengYan() {
         <h2 style={{ color: "#fff", opacity: 0.8 }}>Gan Deng Yan Poker</h2>
         
         <div style={{ background: "rgba(0,0,0,0.3)", padding: "30px", borderRadius: "10px", display: "flex", flexDirection: "column", gap: "10px", alignItems: "center", minWidth: "300px" }}>
-          
           {lobbyStep === "MAIN" && (
             <div style={{ display: "flex", flexDirection: "column", gap: "20px", width: "100%", alignItems: "center" }}>
                <button 
@@ -936,14 +924,12 @@ export default function GanDengYan() {
                 </button>
              </div>
           )}
-
         </div>
       </div>
     );
   }
 
   if (state.status === "scoring") {
-     const winner = state.players.find(p => p.id === state.lastWinnerIndex);
      return (
         <div className="full-screen-overlay">
            <div style={{ 
@@ -958,25 +944,14 @@ export default function GanDengYan() {
                flexDirection: "column",
                position: "relative"
            }}>
-             {/* Close Button */}
              <button
                onClick={() => { setState(prev => ({ ...prev, status: "lobby", scores: {} })); audio.playClick(); }}
                style={{
-                 position: "absolute",
-                 top: "15px",
-                 right: "15px",
-                 background: "rgba(0,0,0,0.2)",
-                 border: "none",
-                 color: "white",
-                 width: "36px",
-                 height: "36px",
-                 borderRadius: "50%",
-                 cursor: "pointer",
-                 fontSize: "20px",
-                 display: "flex",
-                 alignItems: "center",
-                 justifyContent: "center",
-                 zIndex: 10
+                 position: "absolute", top: "15px", right: "15px",
+                 background: "rgba(0,0,0,0.2)", border: "none", color: "white",
+                 width: "36px", height: "36px", borderRadius: "50%",
+                 cursor: "pointer", fontSize: "20px", display: "flex",
+                 alignItems: "center", justifyContent: "center", zIndex: 10
                }}
              >
                ✕
@@ -987,18 +962,10 @@ export default function GanDengYan() {
              </div>
              
              <div style={{ padding: "20px", background: "#2c3e50", flex: 1 }}>
-               {/* Grid Header */}
                <div style={{ 
-                   display: "grid", 
-                   gridTemplateColumns: "1.2fr 1.5fr 60px 60px", 
-                   gap: "10px", 
-                   color: "#95a5a6", 
-                   fontSize: "1rem", 
-                   marginBottom: "15px", 
-                   padding: "0 10px", 
-                   fontWeight: "bold",
-                   borderBottom: "1px solid #34495e",
-                   paddingBottom: "10px"
+                   display: "grid", gridTemplateColumns: "1.2fr 1.5fr 60px 60px", gap: "10px", 
+                   color: "#95a5a6", fontSize: "1rem", marginBottom: "15px", padding: "0 10px", 
+                   fontWeight: "bold", borderBottom: "1px solid #34495e", paddingBottom: "10px"
                }}>
                   <span style={{ textAlign: "left" }}>玩家</span>
                   <span style={{ textAlign: "right" }}>详情</span>
@@ -1009,11 +976,8 @@ export default function GanDengYan() {
                <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                  {state.players.map(p => {
                     const totalScore = state.scores[p.id] || 0;
-                    
-                    // Re-calculate score logic for display
                     const multiplier = Math.pow(2, state.bombCount);
                     let roundScore = 0;
-                    
                     const isWinner = p.id === state.lastWinnerIndex;
                     let detailText = "";
 
@@ -1031,54 +995,26 @@ export default function GanDengYan() {
                     } else {
                        let base = p.cardsLeft;
                        let baseText = `剩${base}张`;
-                       if (base === 1) {
-                           base = 0; 
-                           baseText = `剩1张(免输)`;
-                       }
-                       if (p.cardsLeft === 5 && !p.hasPlayed) {
-                           base = p.cardsLeft * 2; 
-                           baseText = `全关x2`;
-                       }
+                       if (base === 1) { base = 0; baseText = `剩1张(免输)`; }
+                       if (p.cardsLeft === 5 && !p.hasPlayed) { base = p.cardsLeft * 2; baseText = `全关x2`; }
                        roundScore = -1 * base * multiplier;
-                       
-                       // Detail text construction
                        detailText = baseText;
-                       if (multiplier > 1 && p.cardsLeft !== 1) {
-                           detailText += ` x${multiplier}倍`;
-                       }
+                       if (multiplier > 1 && p.cardsLeft !== 1) detailText += ` x${multiplier}倍`;
                     }
 
                     return (
                        <div key={p.id} style={{ 
-                           display: "grid",
-                           gridTemplateColumns: "1.2fr 1.5fr 60px 60px",
-                           gap: "10px",
-                           alignItems: "center",
+                           display: "grid", gridTemplateColumns: "1.2fr 1.5fr 60px 60px", gap: "10px", alignItems: "center",
                            background: isWinner ? "rgba(255, 193, 7, 0.2)" : "transparent",
-                           padding: "10px 10px", 
-                           borderRadius: "8px",
-                           borderBottom: "1px solid #34495e"
+                           padding: "10px 10px", borderRadius: "8px", borderBottom: "1px solid #34495e"
                        }}>
-                         {/* Player */}
                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                             <span style={{ fontWeight: "bold", color: "white", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</span>
                             {isWinner && <span style={{ fontSize: "1.2rem" }}>🏆</span>}
                          </div>
-                         
-                         {/* Detail */}
-                         <div style={{ textAlign: "right", fontSize: "0.9rem", color: "#bdc3c7", whiteSpace: "nowrap" }}>
-                            {detailText}
-                         </div>
-                         
-                         {/* Change */}
-                         <div style={{ textAlign: "right", fontWeight: "bold", color: roundScore > 0 ? "#27ae60" : (roundScore < 0 ? "#e74c3c" : "#95a5a6"), fontSize: "1.1rem" }}>
-                            {roundScore > 0 ? "+" : ""}{roundScore}
-                         </div>
-                         
-                         {/* Total */}
-                         <div style={{ textAlign: "right", color: "white", fontSize: "1.1rem" }}>
-                            {totalScore}
-                         </div>
+                         <div style={{ textAlign: "right", fontSize: "0.9rem", color: "#bdc3c7", whiteSpace: "nowrap" }}>{detailText}</div>
+                         <div style={{ textAlign: "right", fontWeight: "bold", color: roundScore > 0 ? "#27ae60" : (roundScore < 0 ? "#e74c3c" : "#95a5a6"), fontSize: "1.1rem" }}>{roundScore > 0 ? "+" : ""}{roundScore}</div>
+                         <div style={{ textAlign: "right", color: "white", fontSize: "1.1rem" }}>{totalScore}</div>
                        </div>
                     );
                  })}
@@ -1088,17 +1024,7 @@ export default function GanDengYan() {
              <div style={{ padding: "20px", textAlign: "center", background: "#2c3e50" }}>
                  <button 
                    onClick={() => startGame(state.players.length)}
-                   style={{ 
-                       padding: "15px 80px", 
-                       fontSize: "1.3rem", 
-                       cursor: "pointer", 
-                       background: "#d4a017", 
-                       border: "none", 
-                       borderRadius: "10px", 
-                       fontWeight: "bold", 
-                       color: "white",
-                       boxShadow: "0 4px 0 #b38600"
-                   }}
+                   style={{ padding: "15px 80px", fontSize: "1.3rem", cursor: "pointer", background: "#d4a017", border: "none", borderRadius: "10px", fontWeight: "bold", color: "white", boxShadow: "0 4px 0 #b38600" }}
                  >
                    下一局
                  </button>
@@ -1110,11 +1036,7 @@ export default function GanDengYan() {
 
   const user = state.players[0];
   const opponents = state.players.filter(p => p.id !== 0);
-
-  // Dynamic overlap calculation for squeezing cards
   const cardCount = user.hand.length;
-  // Base overlap is -40px. If cards > 5, squeeze more. Max squeeze at -60px.
-  // Formula: -40 - (count - 5) * 4
   const squeeze = cardCount <= 5 ? -40 : -40 - ((cardCount - 5) * 4);
   const cardOverlap = Math.max(-70, squeeze);
 
@@ -1125,19 +1047,11 @@ export default function GanDengYan() {
       <div style={{ position: "absolute", top: "10px", right: "10px", zIndex: 50, display: "flex", gap: "10px" }}>
         <button
           onClick={toggleMute}
+          aria-label="Toggle Sound"
           style={{ 
-              background: "rgba(0,0,0,0.4)", 
-              color: "white", 
-              border: "2px solid white", 
-              borderRadius: "50%", 
-              width: "40px", 
-              height: "40px", 
-              display: "flex", 
-              alignItems: "center", 
-              justifyContent: "center", 
-              cursor: "pointer", 
-              fontSize: "16px",
-              boxShadow: "0 2px 4px rgba(0,0,0,0.2)"
+              background: "rgba(0,0,0,0.4)", color: "white", border: "2px solid white", borderRadius: "50%", 
+              width: "40px", height: "40px", display: "flex", alignItems: "center", justifyContent: "center", 
+              cursor: "pointer", fontSize: "16px", boxShadow: "0 2px 4px rgba(0,0,0,0.2)"
           }}
         >
           {muted ? "🔇" : "🔊"}
@@ -1150,7 +1064,7 @@ export default function GanDengYan() {
         </button>
       </div>
 
-      {/* Opponents Area (Symmetric Layout) */}
+      {/* Opponents Area */}
       <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: "180px", pointerEvents: "none" }}>
         {opponents.map((opp) => {
           const posClass = getOpponentPositionStyle(opp.id, state.players.length);
@@ -1161,25 +1075,18 @@ export default function GanDengYan() {
                zIndex: 10 
             }}>
               <div style={{ position: "relative" }}>
-                 <div style={{ width: "50px", height: "50px", borderRadius: "50%", background: opp.color, display: "flex", alignItems: "center", justifyContent: "center", border: state.currentPlayerIndex === opp.id ? "3px solid #fbc02d" : "2px solid #fff", color: "white", fontSize: "24px", boxShadow: "0 2px 4px rgba(0,0,0,0.3)" }}>
-                   🤖
-                 </div>
-                 {opp.lastAction === "PASS" && (
-                   <div className="pass-bubble">不要</div>
-                 )}
+                 <div style={{ width: "50px", height: "50px", borderRadius: "50%", background: opp.color, display: "flex", alignItems: "center", justifyContent: "center", border: state.currentPlayerIndex === opp.id ? "3px solid #fbc02d" : "2px solid #fff", color: "white", fontSize: "24px", boxShadow: "0 2px 4px rgba(0,0,0,0.3)" }}>🤖</div>
+                 {opp.lastAction === "PASS" && <div className="pass-bubble">不要</div>}
               </div>
-              <div style={{ background: "#fff", color: "#d32f2f", padding: "2px 8px", borderRadius: "10px", marginTop: "-10px", fontWeight: "bold", fontSize: "1.2rem", zIndex: 2, position: "relative", boxShadow: "0 1px 2px black" }}>
-                 {opp.cardsLeft}
-              </div>
+              <div style={{ background: "#fff", color: "#d32f2f", padding: "2px 8px", borderRadius: "10px", marginTop: "-10px", fontWeight: "bold", fontSize: "1.2rem", zIndex: 2, position: "relative", boxShadow: "0 1px 2px black" }}>{opp.cardsLeft}</div>
               <div style={{ fontSize: "0.8rem", marginTop: "4px", textShadow: "1px 1px 2px black", background: "rgba(0,0,0,0.5)", padding: "2px 4px", borderRadius: "4px" }}>{opp.name}</div>
             </div>
           );
         })}
       </div>
 
-      {/* Main Table Area (Center) */}
+      {/* Main Table Area */}
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
-        {/* Played Pile */}
         <div style={{ display: "flex", marginLeft: "-36px", transform: "scale(1.2)" }}>
           {state.tablePile.length === 0 ? (
              <div style={{ marginLeft: "36px", opacity: 0.3, border: "2px dashed #fff", width: "60px", height: "84px", borderRadius: "6px", display: "flex", alignItems: "center", justifyContent: "center" }}>空</div>
@@ -1192,13 +1099,11 @@ export default function GanDengYan() {
           )}
         </div>
         
-        {/* Info Text (Bombs & Multiplier) */}
         <div style={{ position: "absolute", bottom: "10px", background: "rgba(0,0,0,0.6)", padding: "8px 20px", borderRadius: "20px", border: "1px solid rgba(255,255,255,0.2)" }}>
            <span style={{ marginRight: "15px", color: "#e57373" }}>炸弹数: {state.bombCount}</span>
            <span style={{ color: "#fbc02d", fontWeight: "bold" }}>倍数: x{Math.pow(2, state.bombCount)}</span>
         </div>
         
-        {/* Messages */}
         <div style={{ position: "absolute", top: "25%", background: "rgba(255,255,255,0.9)", color: "#000", padding: "8px 16px", borderRadius: "4px", fontWeight: "bold", display: lastMessage ? "block" : "none", maxWidth: "80%", textAlign: "center", boxShadow: "0 2px 10px rgba(0,0,0,0.3)" }}>
           {lastMessage}
         </div>
@@ -1207,9 +1112,7 @@ export default function GanDengYan() {
       {/* User Area */}
       <div style={{ height: "180px", display: "flex", flexDirection: "column", justifyContent: "flex-end", paddingBottom: "10px", background: "linear-gradient(to top, rgba(0,0,0,0.6), transparent)", zIndex: 20, position: "relative" }}>
          
-         {/* Controls */}
          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "20px", marginBottom: "10px", position: "relative", width: "100%" }}>
-            {/* Show 'PASS' bubble for user if they just passed */}
             {user.lastAction === "PASS" && state.currentPlayerIndex !== 0 && (
                  <div className="pass-bubble" style={{ position: "absolute", top: "-40px", left: "50%", transform: "translateX(-50%)" }}>不要</div>
             )}
@@ -1233,26 +1136,17 @@ export default function GanDengYan() {
               </>
             )}
 
-             {/* Deck Pile (Moved Here: Relative to Control Row, far right) */}
              <div style={{ 
-                 position: "absolute", 
-                 right: "5px", 
-                 display: "flex", 
-                 alignItems: "center", 
-                 gap: "8px", 
-                 background: "rgba(0,0,0,0.4)", 
-                 padding: "5px 10px", 
-                 borderRadius: "15px",
-                 border: "1px solid rgba(255,255,255,0.3)",
-                 transform: "scale(0.85)",
-                 transformOrigin: "right center"
+                 position: "absolute", top: "-15px", right: "5px", 
+                 display: "flex", alignItems: "center", gap: "8px", 
+                 background: "rgba(0,0,0,0.4)", padding: "5px 10px", borderRadius: "15px",
+                 border: "1px solid rgba(255,255,255,0.3)", transform: "scale(0.85)", transformOrigin: "right center"
              }}>
                 <div style={{ fontSize: "20px" }}>🂠</div>
                 <span style={{ fontSize: "1rem", whiteSpace: "nowrap", fontWeight: "bold" }}>剩余 {state.deck.length}</span>
              </div>
          </div>
 
-         {/* Hand */}
          <div style={{ display: "flex", justifyContent: "center", height: "130px", overflow: "visible" }}>
             <div style={{ display: "flex", marginLeft: "-40px" }}>
               {user.hand.map((card, i) => (
@@ -1268,10 +1162,8 @@ export default function GanDengYan() {
          </div>
       </div>
 
-      {/* Bomb Toast */}
       {bombToast && <BombEffect text={bombToast} />}
 
-      {/* Celebration Overlay */}
       {state.status === "celebrating" && (
         <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, pointerEvents: "none", zIndex: 999 }}>
           <Confetti />
