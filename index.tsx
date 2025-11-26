@@ -69,6 +69,15 @@ const BOT_COLORS = ["#ef5350", "#ab47bc", "#5c6bc0", "#26c6da", "#66bb6a", "#ffa
 const BOT_AVATARS = ["🐼", "🐨", "🦊", "🐶", "🐱", "🐰", "🐹", "🐯"];
 const APP_ID_PREFIX = "gdy-game-v1-"; // Unique prefix to avoid collision on public PeerServer
 
+// NEW: Tencent & Xiaomi STUN servers for better China LAN connectivity
+const PEER_CONFIG = {
+  iceServers: [
+    { urls: 'stun:stun.qq.com:3478' },     // Tencent
+    { urls: 'stun:stun.miwifi.com:3478' }, // Xiaomi
+    { urls: 'stun:stun.l.google.com:19302' } // Fallback
+  ]
+};
+
 // --- AUDIO SYSTEM ---
 
 class SoundManager {
@@ -556,31 +565,54 @@ export default function GanDengYan() {
 
   const initNetwork = useCallback(() => {
     if (peer) return peer;
-    addLog("初始化P2P网络...");
-    const newPeer = new Peer();
+    addLog("初始化P2P网络(含腾讯STUN)...");
+    
+    // NEW: Use config with China STUN servers
+    const newPeer = new Peer(undefined, {
+       config: PEER_CONFIG,
+       debug: 1
+    });
     
     newPeer.on('open', (id) => {
       setMyPeerId(id);
       addLog("P2P网络就绪，ID获取成功");
     });
+    
+    // NEW: Monitor ICE state for debugging
+    // @ts-ignore
+    newPeer.on('iceStateChanged', (state) => {
+        addLog(`网络协商状态: ${state}`);
+    });
 
     newPeer.on('connection', (conn) => {
       addLog(`收到连接请求: ${conn.peer}`);
-      // Logic for Host receiving connections
+      
+      // NEW: Log Connection ICE state
+      // @ts-ignore
+      if (conn.peerConnection) {
+          // @ts-ignore
+          conn.peerConnection.oniceconnectionstatechange = () => {
+             // @ts-ignore
+             addLog(`Conn State: ${conn.peerConnection.iceConnectionState}`);
+          };
+      }
+
       conn.on('data', (data: any) => {
          handleNetworkData(data, conn);
       });
       conn.on('open', () => {
-         addLog("连接握手成功");
+         addLog("连接通道已完全打开！");
          setConnections(prev => [...prev, conn]);
          // Wait for PLAYER_JOIN to add player
       });
+      conn.on('error', (err) => addLog(`连接内错误: ${err}`));
+      conn.on('close', () => addLog("连接已关闭"));
     });
 
     newPeer.on('error', (err) => {
         console.error(err);
-        addLog(`错误: ${err.type}`);
-        showMessage("网络连接错误", 2000);
+        addLog(`全局错误: ${err.type}`);
+        showMessage(`网络错误: ${err.type}`, 3000);
     });
 
     setPeer(newPeer);
@@ -664,53 +696,73 @@ export default function GanDengYan() {
 
   const createRoom = () => {
       addLog("正在创建房间...");
-      const p = initNetwork();
-      if (!p) return;
+      // Ensure clean state
+      if (peer) { peer.destroy(); setPeer(null); }
       
-      const simpleId = Math.floor(1000 + Math.random() * 9000).toString();
-      const fullId = APP_ID_PREFIX + simpleId;
-      
-      addLog(`尝试注册房间ID: ${simpleId}`);
-      const hostPeer = new Peer(fullId);
-      
-      hostPeer.on('open', (id) => {
-          setMyPeerId(id);
-          setHostRoomId(simpleId);
-          addLog("房间创建成功！等待玩家...");
-          setState({
-              ...state,
-              status: "waiting",
-              isHost: true,
-              myPlayerId: 0,
-              roomId: simpleId,
-              players: [{
-                  id: 0,
-                  name: nickname || "房主",
-                  isAi: false,
-                  hand: [],
-                  cardsLeft: 0,
-                  hasPlayed: false,
-                  lastAction: null,
-                  role: 'host',
-                  color: 'transparent'
-              }]
+      setTimeout(() => {
+          const simpleId = Math.floor(1000 + Math.random() * 9000).toString();
+          const fullId = APP_ID_PREFIX + simpleId;
+          
+          addLog(`注册房间ID: ${simpleId}`);
+          
+          // NEW: Host also uses Tencent STUN
+          const hostPeer = new Peer(fullId, {
+              config: PEER_CONFIG
           });
-      });
-      
-      hostPeer.on('connection', (conn) => {
-          addLog(`有连接进入...`);
-          conn.on('data', (d: any) => handleNetworkData(d, conn));
-          conn.on('open', () => {
-             setConnections(prev => [...prev, conn]);
+          
+          hostPeer.on('open', (id) => {
+              setMyPeerId(id);
+              setHostRoomId(simpleId);
+              addLog("房间创建成功！等待玩家...");
+              setState({
+                  ...state,
+                  status: "waiting",
+                  isHost: true,
+                  myPlayerId: 0,
+                  roomId: simpleId,
+                  players: [{
+                      id: 0,
+                      name: nickname || "房主",
+                      isAi: false,
+                      hand: [],
+                      cardsLeft: 0,
+                      hasPlayed: false,
+                      lastAction: null,
+                      role: 'host',
+                      color: 'transparent',
+                      peerId: id
+                  }]
+              });
           });
-      });
-      
-      hostPeer.on('error', (e) => {
-         addLog(`错误: ${e.type}`);
-         showMessage("创建房间失败(ID冲突)，请重试", 2000);
-      });
-      
-      setPeer(hostPeer);
+          
+          hostPeer.on('connection', (conn) => {
+              addLog(`有连接进入...`);
+              
+              // NEW: Log Connection ICE state
+              // @ts-ignore
+              if (conn.peerConnection) {
+                  // @ts-ignore
+                  conn.peerConnection.oniceconnectionstatechange = () => {
+                     // @ts-ignore
+                     addLog(`Conn State: ${conn.peerConnection.iceConnectionState}`);
+                  };
+              }
+              
+              conn.on('data', (d: any) => handleNetworkData(d, conn));
+              conn.on('open', () => {
+                 addLog(`与 ${conn.peer.slice(-4)} 握手成功！`);
+                 setConnections(prev => [...prev, conn]);
+              });
+              conn.on('error', (e) => addLog(`Conn Err: ${e}`));
+          });
+          
+          hostPeer.on('error', (e) => {
+             addLog(`Host Error: ${e.type}`);
+             if (e.type === 'unavailable-id') showMessage("ID冲突，请重试", 2000);
+          });
+          
+          setPeer(hostPeer);
+      }, 100);
   };
   
   const joinRoom = () => {
@@ -721,45 +773,60 @@ export default function GanDengYan() {
       setNetLogs([]);
       addLog(`正在查找房间: ${joinRoomId}...`);
       
-      const fullId = APP_ID_PREFIX + joinRoomId;
-      const guestPeer = new Peer();
+      if (peer) { peer.destroy(); setPeer(null); }
       
-      guestPeer.on('open', (id) => {
-          setMyPeerId(id);
-          addLog("本地连接就绪，尝试连接房主...");
-          const conn = guestPeer.connect(fullId);
+      setTimeout(() => {
+          const fullId = APP_ID_PREFIX + joinRoomId;
+          const guestPeer = new Peer(undefined, {
+              config: PEER_CONFIG
+          });
           
-          conn.on('open', () => {
-             addLog("已连接到房主！发送加入请求...");
-             showMessage("已连接房主！加入中...", 2000);
-             conn.send({ type: "PLAYER_JOIN", name: nickname || "玩家", peerId: id });
+          guestPeer.on('open', (id) => {
+              setMyPeerId(id);
+              addLog("客户端就绪，发起连接...");
+              
+              // NEW: Force JSON serialization for stability
+              const conn = guestPeer.connect(fullId, {
+                  serialization: 'json',
+                  reliable: true
+              });
+              
+              conn.on('open', () => {
+                 addLog("通道打开！发送加入请求...");
+                 showMessage("已连接房主！", 1000);
+                 conn.send({ type: "PLAYER_JOIN", name: nickname || "玩家", peerId: id });
+              });
+              
+              conn.on('data', (data: any) => {
+                 if (data.type === "SYNC_STATE") {
+                     // addLog("收到同步数据"); 
+                     const s = data.state as GameState;
+                     const me = s.players.find(p => p.peerId === guestPeer.id); 
+                     setState({ ...s, isHost: false, myPlayerId: me ? me.id : -1 });
+                 }
+                 if (data.type === "SHOW_MESSAGE") {
+                     showMessage(data.text, data.duration);
+                 }
+              });
+              
+              conn.on('close', () => {
+                  addLog("连接已断开");
+                  showMessage("连接断开", 3000);
+                  setState(prev => ({...prev, status: 'lobby'}));
+              });
+              
+              conn.on('error', (e) => addLog(`连接异常: ${e}`));
+              
+              setConnections([conn]); 
           });
-          conn.on('data', (data: any) => {
-             if (data.type === "SYNC_STATE") {
-                 addLog("收到同步数据");
-                 const s = data.state as GameState;
-                 const me = s.players.find(p => p.peerId === guestPeer.id); 
-                 setState({ ...s, isHost: false, myPlayerId: me ? me.id : -1 });
-             }
-             if (data.type === "SHOW_MESSAGE") {
-                 showMessage(data.text, data.duration);
-             }
+          
+          guestPeer.on('error', (e) => {
+              addLog(`Guest Error: ${e.type}`);
+              showMessage("连接失败", 2000);
           });
-          conn.on('close', () => {
-              addLog("连接已断开");
-              showMessage("房主已断开", 3000);
-              setState(prev => ({...prev, status: 'lobby'}));
-          });
-          conn.on('error', (e) => addLog(`连接错误: ${e}`));
-          setConnections([conn]); 
-      });
-      
-      guestPeer.on('error', (e) => {
-          addLog(`Peer错误: ${e.type}`);
-          showMessage("找不到房间或连接失败", 2000);
-      });
-      
-      setPeer(guestPeer);
+          
+          setPeer(guestPeer);
+      }, 100);
   };
 
   // --- GAME LOGIC ---
