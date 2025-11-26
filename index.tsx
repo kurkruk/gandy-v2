@@ -785,13 +785,21 @@ export default function GanDengYan() {
               setMyPeerId(id);
               addLog("客户端就绪，发起连接...");
               
-              // NEW: Force JSON serialization for stability
+              // NEW: Remove reliable:true for better compatibility
               const conn = guestPeer.connect(fullId, {
-                  serialization: 'json',
-                  reliable: true
+                  serialization: 'json'
               });
               
+              // Add a fallback timeout if connection hangs
+              const timeoutId = setTimeout(() => {
+                  if (!conn.open) {
+                      addLog("连接超时！请检查房间号或防火墙");
+                      showMessage("连接超时，请重试", 3000);
+                  }
+              }, 10000);
+
               conn.on('open', () => {
+                 clearTimeout(timeoutId);
                  addLog("通道打开！发送加入请求...");
                  showMessage("已连接房主！", 1000);
                  conn.send({ type: "PLAYER_JOIN", name: nickname || "玩家", peerId: id });
@@ -810,19 +818,27 @@ export default function GanDengYan() {
               });
               
               conn.on('close', () => {
+                  clearTimeout(timeoutId);
                   addLog("连接已断开");
                   showMessage("连接断开", 3000);
                   setState(prev => ({...prev, status: 'lobby'}));
               });
               
-              conn.on('error', (e) => addLog(`连接异常: ${e}`));
+              conn.on('error', (e) => {
+                  clearTimeout(timeoutId);
+                  addLog(`连接异常: ${e}`);
+              });
               
               setConnections([conn]); 
           });
           
           guestPeer.on('error', (e) => {
               addLog(`Guest Error: ${e.type}`);
-              showMessage("连接失败", 2000);
+              if (e.type === 'peer-unavailable') {
+                  showMessage("房间不存在", 2000);
+              } else {
+                  showMessage("连接失败", 2000);
+              }
           });
           
           setPeer(guestPeer);
@@ -866,14 +882,26 @@ export default function GanDengYan() {
     
     let players: Player[] = [];
     
-    if (state.status === "waiting") {
-        players = [...state.players];
-        if (players.length < 2) {
+    // Fix: Check if we are in multiplayer mode (waiting) OR restarting a multiplayer game (isHost + existing network players)
+    // We check if any player has a peerId (meaning they are a real network player) and it's not the host (id 0)
+    const isMultiplayerSession = state.isHost && state.players.some(p => p.peerId && p.id !== 0);
+
+    if (state.status === "waiting" || isMultiplayerSession) {
+        // Reuse existing players, just reset hands/status
+        players = state.players.map(p => ({
+            ...p,
+            hand: [],
+            cardsLeft: 0,
+            hasPlayed: false,
+            lastAction: null
+        }));
+        
+        if (state.status === "waiting" && players.length < 2) {
             showMessage("至少需要2人", 1000);
             return;
         }
     } else {
-        // Single Player Setup
+        // Single Player Setup - Create Bots
         for (let i = 0; i < count; i++) {
           const isHuman = i === 0;
           players.push({

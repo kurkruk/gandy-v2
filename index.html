@@ -190,13 +190,14 @@
             color: #d32f2f;
             text-shadow: 2px 2px 0 #fff, -2px -2px 0 #fff, 2px -2px 0 #fff, -2px 2px 0 #fff;
             text-align: center;
-            white-space: pre-wrap;
+            white-space: pre; /* 强制只在 \n 处换行，防止自动换行 */
+            line-height: 1.2;
         }
 
         /* Mobile Adjustments */
         @media (max-width: 600px) {
             .bomb-text {
-                font-size: 2.5rem;
+                font-size: 1.5rem; /* 进一步缩小字号 */
             }
         }
     </style>
