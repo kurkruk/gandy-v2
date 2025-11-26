@@ -171,7 +171,8 @@ const sortCards = (cards: Card[]) => {
   return [...cards].sort((a, b) => a.rank - b.rank);
 };
 
-const analyzeHand = (cards: Card[]): { type: HandType; primaryRank: number; length: number; bombLevel: number } | null => {
+// IMPROVED: analyzeHand now accepts a hint for ambiguity resolution
+const analyzeHand = (cards: Card[], targetRankHint?: number): { type: HandType; primaryRank: number; length: number; bombLevel: number } | null => {
   if (cards.length === 0) return null;
   const sorted = sortCards(cards);
   const len = sorted.length;
@@ -212,6 +213,8 @@ const analyzeHand = (cards: Card[]): { type: HandType; primaryRank: number; leng
       validSeqs.push(Array.from({length: len}, (_, i) => start + i));
     }
 
+    const possibleInterpretations: { primaryRank: number }[] = [];
+
     for (const seq of validSeqs) {
        const seqSet = new Set(seq);
        const isSubset = normals.every(c => seqSet.has(c.rank));
@@ -223,7 +226,20 @@ const analyzeHand = (cards: Card[]): { type: HandType; primaryRank: number; leng
        else if (seq[0] === 15 && seq[1] === 3) virtualId = 2;
        else virtualId = seq[0];
        
-       return { type: "STRAIGHT", primaryRank: virtualId, length: len, bombLevel: 0 };
+       possibleInterpretations.push({ primaryRank: virtualId });
+    }
+
+    if (possibleInterpretations.length > 0) {
+        // If we have a hint (e.g., must beat rank 3, so we look for rank 4), try to find it
+        if (targetRankHint !== undefined) {
+            const match = possibleInterpretations.find(p => p.primaryRank === targetRankHint);
+            if (match) return { type: "STRAIGHT", primaryRank: match.primaryRank, length: len, bombLevel: 0 };
+        }
+        
+        // Default: Return the LARGEST rank (Aggressive play)
+        // Sort descending by primaryRank
+        possibleInterpretations.sort((a, b) => b.primaryRank - a.primaryRank);
+        return { type: "STRAIGHT", primaryRank: possibleInterpretations[0].primaryRank, length: len, bombLevel: 0 };
     }
   }
 
@@ -370,7 +386,7 @@ const calculateAiMove = (hand: Card[], lastHand: PlayedHand | null): { cards: Ca
     }
 
     if (move) {
-        analysis = analyzeHand(move);
+        analysis = analyzeHand(move, lastHand && lastHand.type === 'STRAIGHT' ? lastHand.primaryRank + 1 : undefined);
         return { cards: move, analysis };
     }
     return null;
@@ -864,6 +880,7 @@ export default function GanDengYan() {
           dealerId: dealerIdx,
           passesInARow: 0,
           bombCount: 0,
+          // KEEP Scores from previous round if invalid or reset only on lobby
           scores: prev.scores,
           isHost: prev.isHost !== undefined ? prev.isHost : true, 
           myPlayerId: prev.myPlayerId !== undefined ? prev.myPlayerId : 0
@@ -882,11 +899,11 @@ export default function GanDengYan() {
     
     let players: Player[] = [];
     
-    // Fix: Check if we are in multiplayer mode (waiting) OR restarting a multiplayer game (isHost + existing network players)
-    // We check if any player has a peerId (meaning they are a real network player) and it's not the host (id 0)
-    const isMultiplayerSession = state.isHost && state.players.some(p => p.peerId && p.id !== 0);
+    // Check if we should preserve existing multiplayer/local session players
+    // This happens if we are in waiting room OR if we are restarting a game (scoring/celebrating)
+    const shouldPreservePlayers = state.status === "waiting" || state.status === "scoring" || state.status === "celebrating";
 
-    if (state.status === "waiting" || isMultiplayerSession) {
+    if (shouldPreservePlayers) {
         // Reuse existing players, just reset hands/status
         players = state.players.map(p => ({
             ...p,
@@ -901,7 +918,10 @@ export default function GanDengYan() {
             return;
         }
     } else {
-        // Single Player Setup - Create Bots
+        // Single Player Setup - Create Bots (Reset Scores implicitly by creating new state later if needed, but actually we rely on 'scores' in state)
+        // If coming from MAIN lobby, we want fresh start.
+        setGameState(prev => ({...prev, scores: {}})); // Reset scores for fresh single player game
+
         for (let i = 0; i < count; i++) {
           const isHuman = i === 0;
           players.push({
@@ -1116,10 +1136,14 @@ export default function GanDengYan() {
     const me = state.players[state.myPlayerId || 0];
     const selectedCards = me.hand.filter(c => selectedCardIds.includes(c.id));
     
-    const analysis = analyzeHand(selectedCards);
+    const lastHand = state.tablePile.length > 0 ? state.tablePile[state.tablePile.length - 1] : null;
+    
+    // Pass hint for ambiguity resolution (Jokers)
+    const hintRank = lastHand && lastHand.type === 'STRAIGHT' ? lastHand.primaryRank + 1 : undefined;
+    const analysis = analyzeHand(selectedCards, hintRank);
+
     if (!analysis) { showMessage("牌型无效！", 1500); return; }
 
-    const lastHand = state.tablePile.length > 0 ? state.tablePile[state.tablePile.length - 1] : null;
     if (lastHand && !canBeat(analysis, lastHand)) { showMessage("打不过！需大一级。", 1500); return; }
 
     if (state.isHost) {

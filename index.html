@@ -188,21 +188,27 @@
             font-size: 4rem;
             font-weight: bold;
             color: #d32f2f;
-            text-shadow: 2px 2px 0 #fff, -2px -2px 0 #fff, 2px -2px 0 #fff, -2px 2px 0 #fff;
             text-align: center;
             white-space: pre; /* 强制只在 \n 处换行，防止自动换行 */
             line-height: 1.2;
+            
+            /* Desktop Default Shadow */
+            text-shadow: 2px 2px 0 #fff, -2px -2px 0 #fff, 2px -2px 0 #fff, -2px 2px 0 #fff;
         }
 
         /* Mobile Adjustments */
         @media (max-width: 600px) {
             .bomb-text {
                 font-size: 1.5rem; /* 进一步缩小字号 */
+                
+                /* 手机端抗锯齿优化：使用描边代替厚重阴影 */
+                text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+                -webkit-text-stroke: 1.5px white;
+                paint-order: stroke fill;
             }
         }
     </style>
     <script type="module" src="/index.tsx"></script>
-
 </head>
 <body>
     <div id="root"></div>
