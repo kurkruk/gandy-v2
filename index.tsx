@@ -60,6 +60,7 @@ type NetworkAction =
   | { type: "PLAYER_JOIN"; name: string; peerId: string }
   | { type: "ACTION_PLAY"; cards: Card[]; analysis: any }
   | { type: "ACTION_PASS" }
+  | { type: "HEARTBEAT" }
   | { type: "SHOW_MESSAGE"; text: string; duration: number }
   | { type: "START_GAME"; playerCount: number };
 
@@ -550,6 +551,10 @@ export default function GanDengYan() {
   const aiTimeoutRef = useRef<number | null>(null);
   const msgTimeoutRef = useRef<number | null>(null);
 
+  // FIX: Stale closures in network listeners
+  const playHandRef = useRef<any>(null);
+  const nextTurnRef = useRef<any>(null);
+
   useEffect(() => {
     connectionsRef.current = connections;
   }, [connections]);
@@ -681,6 +686,11 @@ export default function GanDengYan() {
           showMessage(data.text, data.duration);
           return;
       }
+      
+      // Heartbeat - Keep connection alive
+      if (data.type === "HEARTBEAT") {
+          return; 
+      }
 
       // Host receiving Join
       if (data.type === "PLAYER_JOIN") {
@@ -711,12 +721,12 @@ export default function GanDengYan() {
          return;
       }
 
-      // Host receiving Actions
+      // Host receiving Actions via REFS to ensure latest closure
       if (data.type === "ACTION_PLAY") {
-          playHand(data.cards, data.analysis); // Host executes
+          if (playHandRef.current) playHandRef.current(data.cards, data.analysis);
       }
       if (data.type === "ACTION_PASS") {
-          nextTurn(true); // Host executes
+          if (nextTurnRef.current) nextTurnRef.current(true);
       }
   };
 
@@ -870,6 +880,9 @@ export default function GanDengYan() {
                  }
                  if (data.type === "SHOW_MESSAGE") {
                      showMessage(data.text, data.duration);
+                 }
+                 if (data.type === "HEARTBEAT") {
+                     return; // Keep connection alive
                  }
               });
               
@@ -1147,6 +1160,33 @@ export default function GanDengYan() {
     });
     setSelectedCardIds([]);
   }, [handleWin, triggerBombToast]);
+
+  // FIX: Ref-based access for network callbacks
+  useEffect(() => {
+      playHandRef.current = playHand;
+      nextTurnRef.current = nextTurn;
+  }, [playHand, nextTurn]);
+
+  // Heartbeat Mechanism
+  useEffect(() => {
+      if (!state.isHost) return;
+      const interval = setInterval(() => {
+          connectionsRef.current.forEach(conn => {
+              if(conn.open) conn.send({ type: "HEARTBEAT" });
+          });
+      }, 3000);
+      return () => clearInterval(interval);
+  }, [state.isHost]);
+
+  // Redundant State Broadcast when starting new game
+  useEffect(() => {
+      if (state.isHost && state.status === 'playing') {
+          // Send redundant state updates to ensure all clients wake up and receive the new hand
+          [500, 1500].forEach(delay => {
+              setTimeout(() => broadcastState(state), delay);
+          });
+      }
+  }, [state.status, state.isHost, broadcastState]); // Dependencies are important here
 
   // AI Turn Logic (Only Host runs this)
   useEffect(() => {
