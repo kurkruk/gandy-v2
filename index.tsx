@@ -1320,7 +1320,7 @@ export default function GanDengYan() {
       let text = "🂠 干瞪眼战绩表 🂠\n------------------\n";
       state.players.forEach(p => {
          const total = state.scores[p.id] || 0;
-         const history = state.gameHistory.map((h, i) => `R${i+1}:${h[p.id] > 0 ? '+' : ''}${h[p.id]}`).join(', ');
+         const history = state.gameHistory.map((h, i) => `R${i+1}:${(h[p.id] || 0) > 0 ? '+' : ''}${h[p.id] || 0}`).join(', ');
          text += `${p.id + 1}. ${p.name}: ${total > 0 ? '+' : ''}${total} (${history})\n`;
       });
       text += "------------------\n总局数: " + state.gameHistory.length;
@@ -1508,11 +1508,16 @@ export default function GanDengYan() {
                            {state.gameHistory.map((h, i) => (
                                <tr key={i} style={{ borderBottom: "1px solid #444" }}>
                                    <td style={{ padding: "10px", color: "#bbb" }}>R{i+1}</td>
-                                   {state.players.map(p => (
-                                       <td key={p.id} style={{ padding: "10px", textAlign: "center", color: h[p.id] > 0 ? "#4caf50" : (h[p.id] < 0 ? "#e57373" : "#777") }}>
-                                           {h[p.id] > 0 ? "+" : ""}{h[p.id]}
-                                       </td>
-                                   ))}
+                                   {state.players.map(p => {
+                                       // Defensive check: default to 0 if undefined
+                                       const val = h[p.id] ?? 0;
+                                       const color = val > 0 ? "#4caf50" : (val < 0 ? "#e57373" : "#bbb");
+                                       return (
+                                           <td key={p.id} style={{ padding: "10px", textAlign: "center", color: color }}>
+                                               {val > 0 ? "+" : ""}{val}
+                                           </td>
+                                       );
+                                   })}
                                </tr>
                            ))}
                        </tbody>
