@@ -74,8 +74,12 @@ const PEER_CONFIG = {
   iceServers: [
     { urls: 'stun:stun.qq.com:3478' },     // Tencent
     { urls: 'stun:stun.miwifi.com:3478' }, // Xiaomi
+    { urls: 'stun:stun.netease.com:3478' }, // Netease
+    { urls: 'stun:stun.baidu.com:3478' },   // Baidu
+    { urls: 'stun:stun.hitv.com' },
     { urls: 'stun:stun.l.google.com:19302' } // Fallback
-  ]
+  ],
+  sdpSemantics: 'unified-plan'
 };
 
 // --- AUDIO SYSTEM ---
@@ -615,7 +619,8 @@ export default function GanDengYan() {
     // FIX: Pass options as first argument (or cast undefined to any) to avoid TS error
     const newPeer = new Peer({
        config: PEER_CONFIG,
-       debug: 1
+       debug: 1,
+       secure: true
     } as any);
     
     newPeer.on('open', (id) => {
@@ -752,7 +757,8 @@ export default function GanDengYan() {
           
           // NEW: Host also uses Tencent STUN
           const hostPeer = new Peer(fullId, {
-              config: PEER_CONFIG
+              config: PEER_CONFIG,
+              secure: true
           });
           
           hostPeer.on('open', (id) => {
@@ -799,6 +805,9 @@ export default function GanDengYan() {
                  setConnections(prev => [...prev, conn]);
               });
               conn.on('error', (e) => addLog(`Conn Err: ${e}`));
+              
+              // Clean up if not opened in time
+              setTimeout(() => { if (!conn.open) conn.close(); }, 500);
           });
           
           hostPeer.on('error', (e) => {
@@ -807,7 +816,7 @@ export default function GanDengYan() {
           });
           
           setPeer(hostPeer);
-      }, 100);
+      }, 500);
   };
   
   const joinRoom = () => {
@@ -824,7 +833,8 @@ export default function GanDengYan() {
           const fullId = APP_ID_PREFIX + joinRoomId;
           // FIX: Pass options as first argument to avoid TS error
           const guestPeer = new Peer({
-              config: PEER_CONFIG
+              config: PEER_CONFIG,
+              secure: true
           } as any);
           
           guestPeer.on('open', (id) => {
@@ -842,7 +852,7 @@ export default function GanDengYan() {
                       addLog("连接超时！请检查房间号或防火墙");
                       showMessage("连接超时，请重试", 3000);
                   }
-              }, 10000);
+              }, 20000);
 
               conn.on('open', () => {
                  clearTimeout(timeoutId);
@@ -888,7 +898,7 @@ export default function GanDengYan() {
           });
           
           setPeer(guestPeer);
-      }, 100);
+      }, 500);
   };
 
   // --- GAME LOGIC ---
