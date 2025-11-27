@@ -1485,9 +1485,9 @@ export default function GanDengYan() {
                    <table style={{ width: "100%", borderCollapse: "collapse", color: "white", fontSize: "0.9rem", minWidth: "600px" }}>
                        <thead>
                            <tr style={{ borderBottom: "1px solid #777", background: "rgba(0,0,0,0.2)" }}>
-                               <th style={{ padding: "10px", textAlign: "left", minWidth: "60px" }}>局数</th>
+                               <th style={{ padding: "10px", textAlign: "left", minWidth: "60px", background: "#34495e", color: "white", border: "1px solid #555" }}>局数</th>
                                {state.players.map(p => (
-                                   <th key={p.id} style={{ padding: "10px", whiteSpace: "nowrap" }}>{p.name}</th>
+                                   <th key={p.id} style={{ padding: "10px", whiteSpace: "nowrap", minWidth: "80px", background: "#34495e", color: "white", border: "1px solid #555" }}>{p.name}</th>
                                ))}
                            </tr>
                        </thead>
@@ -1497,8 +1497,9 @@ export default function GanDengYan() {
                                <td style={{ padding: "12px 10px", fontWeight: "bold", color: "#fbc02d" }}>累计</td>
                                {state.players.map(p => {
                                    const total = state.scores[p.id] || 0;
+                                   const color = total > 0 ? "#fbc02d" : (total < 0 ? "#ff5252" : "white");
                                    return (
-                                       <td key={p.id} style={{ padding: "12px 10px", textAlign: "center", fontWeight: "900", color: total > 0 ? "#fbc02d" : "white", fontSize: "1.1rem" }}>
+                                       <td key={p.id} style={{ padding: "12px 10px", textAlign: "center", fontWeight: "900", color: color, fontSize: "1.1rem" }}>
                                            {total > 0 ? "+" : ""}{total}
                                        </td>
                                    );
@@ -1506,14 +1507,15 @@ export default function GanDengYan() {
                            </tr>
                            {/* Subsequent Rows: History */}
                            {state.gameHistory.map((h, i) => (
-                               <tr key={i} style={{ borderBottom: "1px solid #444" }}>
+                               <tr key={i} style={{ borderBottom: "1px solid #444", background: i % 2 === 0 ? "rgba(0,0,0,0.2)" : "transparent" }}>
                                    <td style={{ padding: "10px", color: "#bbb" }}>R{i+1}</td>
                                    {state.players.map(p => {
                                        // Defensive check: default to 0 if undefined
                                        const val = h[p.id] ?? 0;
-                                       const color = val > 0 ? "#4caf50" : (val < 0 ? "#e57373" : "#bbb");
+                                       // High contrast colors: 0 -> white, >0 -> green, <0 -> red
+                                       const color = val > 0 ? "#2ecc71" : (val < 0 ? "#ff5252" : "#ffffff");
                                        return (
-                                           <td key={p.id} style={{ padding: "10px", textAlign: "center", color: color }}>
+                                           <td key={p.id} style={{ padding: "10px", textAlign: "center", color: color, border: "1px solid #444" }}>
                                                {val > 0 ? "+" : ""}{val}
                                            </td>
                                        );
@@ -1522,10 +1524,14 @@ export default function GanDengYan() {
                            ))}
                        </tbody>
                    </table>
+                   {state.gameHistory.length === 0 && <div style={{textAlign: "center", padding: "20px", color: "#888"}}>暂无对局记录</div>}
                </div>
                
                <div style={{ marginTop: "15px", display: "flex", justifyContent: "center" }}>
                    <button onClick={copyReportToClipboard} style={{ padding: "10px 20px", background: "#039be5", color: "white", border: "none", borderRadius: "5px", cursor: "pointer", fontWeight: "bold" }}>📋 复制战绩</button>
+               </div>
+               <div style={{textAlign: "center", fontSize: "10px", color: "#555", marginTop: "5px"}}>
+                   (调试: P={state.players.length}, H={state.gameHistory.length})
                </div>
            </div>
         </div>
