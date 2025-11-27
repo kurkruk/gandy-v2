@@ -1320,7 +1320,7 @@ export default function GanDengYan() {
       let text = "🂠 干瞪眼战绩表 🂠\n------------------\n";
       state.players.forEach(p => {
          const total = state.scores[p.id] || 0;
-         const history = state.gameHistory.map((h, i) => `R${i+1}:${(h[p.id] || 0) > 0 ? '+' : ''}${h[p.id] || 0}`).join(', ');
+         const history = state.gameHistory.map((h, i) => `R${i+1}:${h[p.id] > 0 ? '+' : ''}${h[p.id]}`).join(', ');
          text += `${p.id + 1}. ${p.name}: ${total > 0 ? '+' : ''}${total} (${history})\n`;
       });
       text += "------------------\n总局数: " + state.gameHistory.length;
@@ -1475,63 +1475,46 @@ export default function GanDengYan() {
   if (showReport) {
       return (
         <div className="full-screen-overlay" style={{ zIndex: 200 }}>
-           <div style={{ background: "#2c3e50", borderRadius: "10px", padding: "20px", maxWidth: "95%", width: "800px", maxHeight: "80%", display: "flex", flexDirection: "column" }}>
+           <div style={{ background: "#2c3e50", borderRadius: "10px", padding: "20px", maxWidth: "90%", width: "600px", maxHeight: "80%", display: "flex", flexDirection: "column" }}>
                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px", borderBottom: "1px solid #555", paddingBottom: "10px" }}>
                    <h2 style={{ margin: 0, color: "#fbc02d" }}>📊 战绩报表</h2>
                    <button onClick={() => setShowReport(false)} style={{ background: "none", border: "none", color: "white", fontSize: "24px", cursor: "pointer" }}>✕</button>
                </div>
                
                <div style={{ overflow: "auto", flex: 1 }}>
-                   <table style={{ width: "100%", borderCollapse: "collapse", color: "white", fontSize: "0.9rem", minWidth: "600px" }}>
+                   <table style={{ width: "100%", borderCollapse: "collapse", color: "white", fontSize: "0.9rem" }}>
                        <thead>
-                           <tr style={{ borderBottom: "1px solid #777", background: "rgba(0,0,0,0.2)" }}>
-                               <th style={{ padding: "10px", textAlign: "left", minWidth: "60px", background: "#34495e", color: "white", border: "1px solid #555" }}>局数</th>
-                               {state.players.map(p => (
-                                   <th key={p.id} style={{ padding: "10px", whiteSpace: "nowrap", minWidth: "80px", background: "#34495e", color: "white", border: "1px solid #555" }}>{p.name}</th>
+                           <tr style={{ borderBottom: "1px solid #777" }}>
+                               <th style={{ padding: "8px", textAlign: "left" }}>玩家</th>
+                               {state.gameHistory.map((_, i) => (
+                                   <th key={i} style={{ padding: "8px", whiteSpace: "nowrap" }}>R{i+1}</th>
                                ))}
+                               <th style={{ padding: "8px", color: "#fbc02d" }}>总计</th>
                            </tr>
                        </thead>
                        <tbody>
-                           {/* Row 1: Cumulative Total */}
-                           <tr style={{ borderBottom: "2px solid #555", background: "rgba(251, 192, 45, 0.15)" }}>
-                               <td style={{ padding: "12px 10px", fontWeight: "bold", color: "#fbc02d" }}>累计</td>
-                               {state.players.map(p => {
-                                   const total = state.scores[p.id] || 0;
-                                   const color = total > 0 ? "#fbc02d" : (total < 0 ? "#ff5252" : "white");
-                                   return (
-                                       <td key={p.id} style={{ padding: "12px 10px", textAlign: "center", fontWeight: "900", color: color, fontSize: "1.1rem" }}>
+                           {state.players.map(p => {
+                               const total = state.scores[p.id] || 0;
+                               return (
+                                   <tr key={p.id} style={{ borderBottom: "1px solid #444" }}>
+                                       <td style={{ padding: "8px", fontWeight: "bold" }}>{p.name}</td>
+                                       {state.gameHistory.map((h, i) => (
+                                           <td key={i} style={{ padding: "8px", textAlign: "center", color: h[p.id] > 0 ? "#4caf50" : (h[p.id] < 0 ? "#e57373" : "#aaa") }}>
+                                               {h[p.id] > 0 ? "+" : ""}{h[p.id]}
+                                           </td>
+                                       ))}
+                                       <td style={{ padding: "8px", textAlign: "center", fontWeight: "bold", color: total > 0 ? "#fbc02d" : "white" }}>
                                            {total > 0 ? "+" : ""}{total}
                                        </td>
-                                   );
-                               })}
-                           </tr>
-                           {/* Subsequent Rows: History */}
-                           {state.gameHistory.map((h, i) => (
-                               <tr key={i} style={{ borderBottom: "1px solid #444", background: i % 2 === 0 ? "rgba(0,0,0,0.2)" : "transparent" }}>
-                                   <td style={{ padding: "10px", color: "#bbb" }}>R{i+1}</td>
-                                   {state.players.map(p => {
-                                       // Defensive check: default to 0 if undefined
-                                       const val = h[p.id] ?? 0;
-                                       // High contrast colors: 0 -> white, >0 -> green, <0 -> red
-                                       const color = val > 0 ? "#2ecc71" : (val < 0 ? "#ff5252" : "#ffffff");
-                                       return (
-                                           <td key={p.id} style={{ padding: "10px", textAlign: "center", color: color, border: "1px solid #444" }}>
-                                               {val > 0 ? "+" : ""}{val}
-                                           </td>
-                                       );
-                                   })}
-                               </tr>
-                           ))}
+                                   </tr>
+                               );
+                           })}
                        </tbody>
                    </table>
-                   {state.gameHistory.length === 0 && <div style={{textAlign: "center", padding: "20px", color: "#888"}}>暂无对局记录</div>}
                </div>
                
                <div style={{ marginTop: "15px", display: "flex", justifyContent: "center" }}>
                    <button onClick={copyReportToClipboard} style={{ padding: "10px 20px", background: "#039be5", color: "white", border: "none", borderRadius: "5px", cursor: "pointer", fontWeight: "bold" }}>📋 复制战绩</button>
-               </div>
-               <div style={{textAlign: "center", fontSize: "10px", color: "#555", marginTop: "5px"}}>
-                   (调试: P={state.players.length}, H={state.gameHistory.length})
                </div>
            </div>
         </div>
