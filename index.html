@@ -89,6 +89,30 @@
              100% { transform: translate(-50%, -50%) scale(1); }
         }
 
+        /* Flying Card Animations - Fly from Avatar (Scale Up) */
+        @keyframes slideInBottom {
+            from { transform: translateY(40vh) scale(0.6); opacity: 0.5; }
+            to { transform: translateY(0) scale(1); opacity: 1; }
+        }
+        @keyframes slideInTop {
+            from { transform: translateY(-40vh) scale(0.1); opacity: 0.5; }
+            to { transform: translateY(0) scale(1); opacity: 1; }
+        }
+        @keyframes slideInLeft {
+            from { transform: translateX(-45vw) scale(0.1); opacity: 0.5; }
+            to { transform: translateX(0) scale(1); opacity: 1; }
+        }
+        @keyframes slideInRight {
+            from { transform: translateX(45vw) scale(0.1); opacity: 0.5; }
+            to { transform: translateX(0) scale(1); opacity: 1; }
+        }
+
+        /* Using ease-out for a snappy arrival */
+        .anim-slide-bottom { animation: slideInBottom 0.35s ease-out forwards; }
+        .anim-slide-top { animation: slideInTop 0.35s ease-out forwards; }
+        .anim-slide-left { animation: slideInLeft 0.35s ease-out forwards; }
+        .anim-slide-right { animation: slideInRight 0.35s ease-out forwards; }
+
         .animate-pop { animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
         .animate-deal { animation: deal 0.4s ease-out forwards; }
 
@@ -138,19 +162,18 @@
         /* Bubbles & Badges */
         .pass-bubble {
             position: absolute;
-            background: rgba(0, 0, 0, 0.6);
-            color: white;
-            padding: 6px 14px;
-            border-radius: 20px;
-            font-size: 12px;
+            background: rgba(0, 0, 0, 0.6); /* Neutral dark background */
+            color: #fff;
+            padding: 4px 10px; /* Smaller padding */
+            border-radius: 12px; /* Pill shape */
+            font-size: 12px; /* Smaller font */
             top: -10px;
-            right: -20px;
+            right: -10px;
             white-space: nowrap;
             width: fit-content;
-            border: 1px solid rgba(255,255,255,0.6);
+            border: 1px solid rgba(255,255,255,0.5); /* Subtle border */
             animation: popIn 0.2s ease-out;
             z-index: 20;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
         }
 
         .dealer-badge {
