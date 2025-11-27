@@ -49,6 +49,7 @@ interface GameState {
   passesInARow: number;
   bombCount: number;
   scores: { [playerId: number]: number };
+  gameHistory: { [playerId: number]: number }[]; // Array of round deltas
   roomId?: string; // Multiplayer Room ID
   isHost?: boolean;
   myPlayerId?: number; // Which player am I?
@@ -527,7 +528,8 @@ export default function GanDengYan() {
     dealerId: 0,
     passesInARow: 0,
     bombCount: 0,
-    scores: {}
+    scores: {},
+    gameHistory: []
   });
   
   const [selectedCardIds, setSelectedCardIds] = useState<string[]>([]);
@@ -536,6 +538,7 @@ export default function GanDengYan() {
   const [nickname, setNickname] = useState("");
   const [bombToast, setBombToast] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
+  const [showReport, setShowReport] = useState(false);
   
   // Network State
   const [peer, setPeer] = useState<Peer | null>(null);
@@ -593,11 +596,13 @@ export default function GanDengYan() {
         dealerId: 0,
         passesInARow: 0,
         bombCount: 0,
-        scores: {}
+        scores: {},
+        gameHistory: []
       });
       setLobbyStep("MAIN");
       setBombToast(null);
       setSelectedCardIds([]);
+      setShowReport(false);
   };
 
   const showMessage = useCallback((msg: string, duration: number = 0) => {
@@ -792,7 +797,9 @@ export default function GanDengYan() {
                       role: 'host',
                       color: 'transparent',
                       peerId: id
-                  }]
+                  }],
+                  scores: {},
+                  gameHistory: []
               });
           });
           
@@ -916,7 +923,7 @@ export default function GanDengYan() {
 
   // --- GAME LOGIC ---
 
-  const dealAndPlay = (players: Player[], deck: Card[], dealerIdx: number, initialScores: {[k:number]:number}) => {
+  const dealAndPlay = (players: Player[], deck: Card[], dealerIdx: number, initialScores: {[k:number]:number}, initialHistory: {[k:number]:number}[]) => {
         players.forEach((p, idx) => {
           const cardsToTake = idx === dealerIdx ? 6 : 5;
           p.hand = sortCards(deck.splice(0, cardsToTake));
@@ -934,6 +941,7 @@ export default function GanDengYan() {
           passesInARow: 0,
           bombCount: 0,
           scores: initialScores,
+          gameHistory: initialHistory,
           isHost: prev.isHost !== undefined ? prev.isHost : true, 
           myPlayerId: prev.myPlayerId !== undefined ? prev.myPlayerId : 0
         }));
@@ -955,6 +963,7 @@ export default function GanDengYan() {
     // This happens if we are in waiting room OR if we are restarting a game (scoring/celebrating)
     const shouldPreservePlayers = state.status === "waiting" || state.status === "scoring" || state.status === "celebrating";
     let scoresToKeep: {[k:number]:number} = {};
+    let historyToKeep: {[k:number]:number}[] = [];
 
     if (shouldPreservePlayers) {
         // Reuse existing players, just reset hands/status
@@ -969,6 +978,7 @@ export default function GanDengYan() {
         // Preserve scores if coming from a previous game (scoring/celebrating), otherwise (waiting) it's a new session
         if (state.status === "scoring" || state.status === "celebrating") {
             scoresToKeep = state.scores;
+            historyToKeep = state.gameHistory;
         }
 
         if (state.status === "waiting" && players.length < 2) {
@@ -1010,7 +1020,7 @@ export default function GanDengYan() {
             audio.playDeal(); // Sound effect for selection
 
             setTimeout(() => {
-                dealAndPlay(players, newDeck, dealerIdx, scoresToKeep);
+                dealAndPlay(players, newDeck, dealerIdx, scoresToKeep, historyToKeep);
             }, 1500);
         }, 1500);
         return;
@@ -1021,32 +1031,40 @@ export default function GanDengYan() {
     if (state.lastWinnerIndex >= 0 && state.lastWinnerIndex < players.length) {
       dealerIndex = state.lastWinnerIndex;
     }
-    dealAndPlay(players, newDeck, dealerIndex, scoresToKeep);
+    dealAndPlay(players, newDeck, dealerIndex, scoresToKeep, historyToKeep);
   };
 
   const calculateScores = useCallback((winnerIdx: number, players: Player[], bombs: number, oldScores: {[k:number]:number}) => {
     const multiplier = Math.pow(2, bombs);
     let totalWin = 0;
     const currentScores = { ...oldScores };
+    const roundDeltas: {[k:number]:number} = {};
 
     players.forEach(p => {
-      if (p.id === winnerIdx) return;
-      let base = p.cardsLeft;
-      if (base === 1) base = 0; 
-      if (base === 5 && !p.hasPlayed) base = base * 2; 
+      let change = 0;
+      if (p.id !== winnerIdx) {
+          let base = p.cardsLeft;
+          if (base === 1) base = 0; 
+          if (base === 5 && !p.hasPlayed) base = base * 2; 
 
-      const penalty = base * multiplier;
-      currentScores[p.id] = (currentScores[p.id] || 0) - penalty;
-      totalWin += penalty;
+          const penalty = base * multiplier;
+          change = -penalty;
+          totalWin += penalty;
+      }
+      roundDeltas[p.id] = change;
+      currentScores[p.id] = (currentScores[p.id] || 0) + change;
     });
 
+    // Winner gets remaining
+    roundDeltas[winnerIdx] = totalWin;
     currentScores[winnerIdx] = (currentScores[winnerIdx] || 0) + totalWin;
-    return currentScores;
+    
+    return { currentScores, roundDeltas };
   }, []);
 
   const handleWin = useCallback((winnerIdx: number, finalBombCount: number, currentPlayers: Player[], lastHand: PlayedHand) => {
     audio.playWin();
-    const scoresUpdate = calculateScores(winnerIdx, currentPlayers, finalBombCount, state.scores);
+    const { currentScores, roundDeltas } = calculateScores(winnerIdx, currentPlayers, finalBombCount, state.scores);
 
     setGameState(prev => ({ 
       ...prev, 
@@ -1061,7 +1079,8 @@ export default function GanDengYan() {
       setGameState(prev => ({
         ...prev,
         status: "scoring",
-        scores: scoresUpdate
+        scores: currentScores,
+        gameHistory: [...prev.gameHistory, roundDeltas]
       }));
     }, 4000);
   }, [state.scores, calculateScores]);
@@ -1296,6 +1315,23 @@ export default function GanDengYan() {
     }
     return "pos-top";
   };
+  
+  const copyReportToClipboard = () => {
+      let text = "🂠 干瞪眼战绩表 🂠\n------------------\n";
+      state.players.forEach(p => {
+         const total = state.scores[p.id] || 0;
+         const history = state.gameHistory.map((h, i) => `R${i+1}:${h[p.id] > 0 ? '+' : ''}${h[p.id]}`).join(', ');
+         text += `${p.id + 1}. ${p.name}: ${total > 0 ? '+' : ''}${total} (${history})\n`;
+      });
+      text += "------------------\n总局数: " + state.gameHistory.length;
+      
+      navigator.clipboard.writeText(text).then(() => {
+          showMessage("已复制到剪贴板！", 1500);
+      }).catch(err => {
+          console.error(err);
+          showMessage("复制失败，请截图", 1500);
+      });
+  };
 
   // --- RENDER ---
 
@@ -1433,8 +1469,58 @@ export default function GanDengYan() {
     );
   }
 
-  // Common Game Render (same as before but using calculated myId)
+  // Common Game Render
   
+  // --- REPORT MODAL ---
+  if (showReport) {
+      return (
+        <div className="full-screen-overlay" style={{ zIndex: 200 }}>
+           <div style={{ background: "#2c3e50", borderRadius: "10px", padding: "20px", maxWidth: "90%", width: "600px", maxHeight: "80%", display: "flex", flexDirection: "column" }}>
+               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px", borderBottom: "1px solid #555", paddingBottom: "10px" }}>
+                   <h2 style={{ margin: 0, color: "#fbc02d" }}>📊 战绩报表</h2>
+                   <button onClick={() => setShowReport(false)} style={{ background: "none", border: "none", color: "white", fontSize: "24px", cursor: "pointer" }}>✕</button>
+               </div>
+               
+               <div style={{ overflow: "auto", flex: 1 }}>
+                   <table style={{ width: "100%", borderCollapse: "collapse", color: "white", fontSize: "0.9rem" }}>
+                       <thead>
+                           <tr style={{ borderBottom: "1px solid #777" }}>
+                               <th style={{ padding: "8px", textAlign: "left" }}>玩家</th>
+                               {state.gameHistory.map((_, i) => (
+                                   <th key={i} style={{ padding: "8px", whiteSpace: "nowrap" }}>R{i+1}</th>
+                               ))}
+                               <th style={{ padding: "8px", color: "#fbc02d" }}>总计</th>
+                           </tr>
+                       </thead>
+                       <tbody>
+                           {state.players.map(p => {
+                               const total = state.scores[p.id] || 0;
+                               return (
+                                   <tr key={p.id} style={{ borderBottom: "1px solid #444" }}>
+                                       <td style={{ padding: "8px", fontWeight: "bold" }}>{p.name}</td>
+                                       {state.gameHistory.map((h, i) => (
+                                           <td key={i} style={{ padding: "8px", textAlign: "center", color: h[p.id] > 0 ? "#4caf50" : (h[p.id] < 0 ? "#e57373" : "#aaa") }}>
+                                               {h[p.id] > 0 ? "+" : ""}{h[p.id]}
+                                           </td>
+                                       ))}
+                                       <td style={{ padding: "8px", textAlign: "center", fontWeight: "bold", color: total > 0 ? "#fbc02d" : "white" }}>
+                                           {total > 0 ? "+" : ""}{total}
+                                       </td>
+                                   </tr>
+                               );
+                           })}
+                       </tbody>
+                   </table>
+               </div>
+               
+               <div style={{ marginTop: "15px", display: "flex", justifyContent: "center" }}>
+                   <button onClick={copyReportToClipboard} style={{ padding: "10px 20px", background: "#039be5", color: "white", border: "none", borderRadius: "5px", cursor: "pointer", fontWeight: "bold" }}>📋 复制战绩</button>
+               </div>
+           </div>
+        </div>
+      );
+  }
+
   if (state.status === "scoring") {
      return (
         <div className="full-screen-overlay">
@@ -1475,23 +1561,18 @@ export default function GanDengYan() {
                     const isWinner = p.id === state.lastWinnerIndex;
                     let detailText = "";
 
+                    // Calculate score again for display (logic duplicated from calcScores but necessary for display)
+                    // Better approach: use the history we just pushed
+                    const lastHistory = state.gameHistory[state.gameHistory.length - 1] || {};
+                    roundScore = lastHistory[p.id] || 0;
+
                     if (isWinner) {
                        detailText = "赢家通吃";
-                       let totalWin = 0;
-                       state.players.forEach(loser => {
-                           if (loser.id === state.lastWinnerIndex) return;
-                           let base = loser.cardsLeft;
-                           if (base === 1) base = 0; 
-                           if (base === 5 && !loser.hasPlayed) base = base * 2; 
-                           totalWin += base * multiplier;
-                       });
-                       roundScore = totalWin;
                     } else {
                        let base = p.cardsLeft;
                        let baseText = `剩${base}张`;
                        if (base === 1) { base = 0; baseText = `剩1张(免输)`; }
                        if (p.cardsLeft === 5 && !p.hasPlayed) { base = p.cardsLeft * 2; baseText = `全关x2`; }
-                       roundScore = -1 * base * multiplier;
                        detailText = baseText;
                        if (multiplier > 1 && p.cardsLeft !== 1) detailText += ` x${multiplier}倍`;
                     }
@@ -1511,13 +1592,19 @@ export default function GanDengYan() {
                </div>
              </div>
              
-             <div style={{ padding: "20px", textAlign: "center", background: "#2c3e50" }}>
+             <div style={{ padding: "20px", textAlign: "center", background: "#2c3e50", display: "flex", flexDirection: "column", gap: "10px" }}>
                  <button 
                    onClick={() => state.isHost && startGame(state.players.length)}
                    disabled={!state.isHost}
                    style={{ padding: "15px 80px", fontSize: "1.3rem", cursor: state.isHost ? "pointer" : "not-allowed", background: state.isHost ? "#d4a017" : "#7f8c8d", border: "none", borderRadius: "10px", fontWeight: "bold", color: "white", boxShadow: "0 4px 0 rgba(0,0,0,0.2)" }}
                  >
                    {state.isHost ? "下一局" : "等待房主..."}
+                 </button>
+                 <button 
+                   onClick={() => setShowReport(true)}
+                   style={{ background: "transparent", border: "1px solid #7f8c8d", color: "#bdc3c7", padding: "10px", borderRadius: "8px", cursor: "pointer" }}
+                 >
+                   📊 查看战绩
                  </button>
              </div>
            </div>
