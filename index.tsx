@@ -1142,21 +1142,10 @@ export default function GanDengYan() {
     // If first game (from lobby/waiting) OR draw (lastWinnerIndex -1), perform Ritual.
     if (state.status === 'lobby' || state.status === 'waiting' || state.lastWinnerIndex === -1) {
         const dealerIdx = Math.floor(Math.random() * players.length);
-        
-        const msg1 = "🎲 命运的齿轮开始转动...";
-        showMessage(msg1, 1500);
-        broadcastMessage(msg1, 1500);
-
-        setTimeout(() => {
-            const msg2 = `🎉 本次天选之子是：${players[dealerIdx].name}！`;
-            showMessage(msg2, 1500);
-            broadcastMessage(msg2, 1500);
-            audio.playDeal(); // Sound effect for selection
-
-            setTimeout(() => {
-                dealAndPlay(players, newDeck, dealerIdx, scoresToKeep, historyToKeep);
-            }, 1500);
-        }, 1500);
+        const msg = `${players[dealerIdx].name} 成为首局随机庄家`;
+        showMessage(msg, 2000);
+        broadcastMessage(msg, 2000);
+        dealAndPlay(players, newDeck, dealerIdx, scoresToKeep, historyToKeep);
         return;
     }
 
@@ -1887,7 +1876,7 @@ export default function GanDengYan() {
               cursor: "pointer", 
               height: "40px", 
               fontWeight: "bold",
-              fontSize: "0.9rem",
+              fontSize: "0.9rem", 
               display: "flex",
               alignItems: "center",
               gap: "5px",
@@ -1902,7 +1891,7 @@ export default function GanDengYan() {
         <button onClick={exitToLobby} style={{ background: "rgba(0,0,0,0.4)", color: "white", border: "1px solid white", borderRadius: "20px", padding: "5px 15px", cursor: "pointer", height: "40px", fontWeight: "bold" }}>退出</button>
       </div>
 
-      <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: "200px", pointerEvents: "none" }}>
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: "260px", pointerEvents: "none" }}>
         {opponents.map((opp) => {
           const posClass = getOpponentPositionStyle(opp.id, state.players.length);
           const avatar = BOT_AVATARS[(opp.id - 1) % BOT_AVATARS.length] || "👤";
@@ -1947,7 +1936,7 @@ export default function GanDengYan() {
         </div>
       </div>
 
-      <div style={{ height: "200px", display: "flex", flexDirection: "column", justifyContent: "flex-end", paddingBottom: "10px", background: "linear-gradient(to top, rgba(0,0,0,0.6), transparent)", zIndex: 20, position: "relative" }}>
+      <div style={{ height: "260px", display: "flex", flexDirection: "column", justifyContent: "flex-end", paddingBottom: "20px", background: "linear-gradient(to top, rgba(0,0,0,0.6), transparent)", zIndex: 20, position: "relative" }}>
          
          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "20px", marginBottom: "25px", position: "relative", width: "100%" }}>
             {user.lastAction === "PASS" && !isMyTurn && (
