@@ -378,11 +378,6 @@ const calculateAiMove = (hand: Card[], lastHand: PlayedHand | null): { cards: Ca
     
     const findStraightWithWild = (minLen: number, targetRank: number | null, limitToLow: boolean = false): Card[] | null => {
         if (!hasJoker) return null;
-        // Simplified: Try to fill ONE gap with ONE joker.
-        // Or extend length. Complex, but for this game:
-        // Case: We need to beat targetRank. So start must be targetRank+1.
-        // We need minLen-1 normals and 1 joker in a seq with at most 1 gap.
-        
         const pool = limitToLow ? lowNormals : normals;
         const uniqueNormals = Array.from(new Set(pool.map(c => c.rank))).sort((a,b)=>a-b);
         
@@ -397,8 +392,7 @@ const calculateAiMove = (hand: Card[], lastHand: PlayedHand | null): { cards: Ca
 
         for (const start of startRanks) {
             const desiredSeq = Array.from({length: minLen}, (_, i) => start + i);
-            // Check if valid rank range (3..15) roughly
-            if (desiredSeq[desiredSeq.length-1] > 15) continue; // 2 cannot be in straight usually in this simple logic unless A-2...
+            if (desiredSeq[desiredSeq.length-1] > 15) continue; 
 
             const found: Card[] = [];
             let missing = 0;
@@ -749,7 +743,6 @@ export default function GanDengYan() {
     addLog("初始化P2P网络(含腾讯STUN)...");
     
     // NEW: Use config with China STUN servers
-    // FIX: Pass options as first argument (or cast undefined to any) to avoid TS error
     const newPeer = new Peer({
        config: PEER_CONFIG,
        debug: 1,
@@ -786,7 +779,6 @@ export default function GanDengYan() {
       conn.on('open', () => {
          addLog("连接通道已完全打开！");
          setConnections(prev => [...prev, conn]);
-         // Wait for PLAYER_JOIN to add player
       });
       conn.on('error', (err) => addLog(`连接异常: ${err}`));
       conn.on('close', () => addLog("连接已关闭"));
@@ -979,7 +971,6 @@ export default function GanDengYan() {
       
       setTimeout(() => {
           const fullId = APP_ID_PREFIX + joinRoomId;
-          // FIX: Pass options as first argument to avoid TS error
           const guestPeer = new Peer({
               config: PEER_CONFIG,
               secure: true
@@ -1011,7 +1002,6 @@ export default function GanDengYan() {
               
               conn.on('data', (data: any) => {
                  if (data.type === "SYNC_STATE") {
-                     // addLog("收到同步数据"); 
                      const s = data.state as GameState;
                      const me = s.players.find(p => p.peerId === guestPeer.id); 
                      setState({ ...s, isHost: false, myPlayerId: me ? me.id : -1 });
@@ -1079,8 +1069,9 @@ export default function GanDengYan() {
         }));
         
         audio.playDeal();
-        showMessage(`游戏开始！${players[dealerIdx].name} 先出。`, 3000);
-        broadcastMessage(`游戏开始！${players[dealerIdx].name} 先出。`);
+        const msg = `游戏开始！${players[dealerIdx].name} 先出。`;
+        showMessage(msg, 3000);
+        broadcastMessage(msg);
         setSelectedCardIds([]);
   }
 
@@ -1091,14 +1082,11 @@ export default function GanDengYan() {
     
     let players: Player[] = [];
     
-    // Check if we should preserve existing multiplayer/local session players
-    // This happens if we are in waiting room OR if we are restarting a game (scoring/celebrating)
-    const shouldPreservePlayers = state.status === "waiting" || state.status === "scoring" || state.status === "celebrating" || state.status === "playing" /* draw reset */;
+    const shouldPreservePlayers = state.status === "waiting" || state.status === "scoring" || state.status === "celebrating" || state.status === "playing";
     let scoresToKeep: {[k:number]:number} = scoreOverride || {};
     let historyToKeep: {[k:number]:number}[] = [];
 
     if (shouldPreservePlayers) {
-        // Reuse existing players, just reset hands/status
         players = state.players.map(p => ({
             ...p,
             hand: [],
@@ -1107,7 +1095,6 @@ export default function GanDengYan() {
             lastAction: null
         }));
         
-        // Preserve scores if coming from a previous game (scoring/celebrating), otherwise (waiting) it's a new session
         if (state.status === "scoring" || state.status === "celebrating" || state.status === "playing") {
              if (!scoreOverride) {
                 scoresToKeep = state.scores;
@@ -1120,7 +1107,7 @@ export default function GanDengYan() {
             return;
         }
     } else {
-        // Single Player Setup - Create Bots
+        // Single Player Setup
         for (let i = 0; i < count; i++) {
           const isHuman = i === 0;
           players.push({
@@ -1135,11 +1122,8 @@ export default function GanDengYan() {
             color: isHuman ? "transparent" : BOT_COLORS[(i - 1) % BOT_COLORS.length]
           });
         }
-        // Scores default to empty for new single player game
     }
 
-    // Determine Dealer
-    // If first game (from lobby/waiting) OR draw (lastWinnerIndex -1), perform Ritual.
     if (state.status === 'lobby' || state.status === 'waiting' || state.lastWinnerIndex === -1) {
         const dealerIdx = Math.floor(Math.random() * players.length);
         const msg = `${players[dealerIdx].name} 成为首局随机庄家`;
@@ -1149,7 +1133,6 @@ export default function GanDengYan() {
         return;
     }
 
-    // Subsequent games, winner deals
     let dealerIndex = 0;
     if (state.lastWinnerIndex >= 0 && state.lastWinnerIndex < players.length) {
       dealerIndex = state.lastWinnerIndex;
@@ -1178,7 +1161,6 @@ export default function GanDengYan() {
       currentScores[p.id] = (currentScores[p.id] || 0) + change;
     });
 
-    // Winner gets remaining
     roundDeltas[winnerIdx] = totalWin;
     currentScores[winnerIdx] = (currentScores[winnerIdx] || 0) + totalWin;
     
@@ -1214,14 +1196,12 @@ export default function GanDengYan() {
       showMessage(msg, 3000);
       broadcastMessage(msg, 3000);
 
-      // Force draw effect: no winner, random next dealer
       setGameState(prev => ({
           ...prev,
-          lastWinnerIndex: -1 // Signals random dealer
+          lastWinnerIndex: -1
       }));
 
       setTimeout(() => {
-          // Restart game with current scores preserved
           startGame(state.players.length, state.scores);
       }, 3000);
   }, [state.scores, state.players.length, showMessage, broadcastMessage]);
@@ -1237,7 +1217,6 @@ export default function GanDengYan() {
 
         nextPlayers[currentState.currentPlayerIndex].lastAction = passed ? "PASS" : "PLAY";
 
-        // Check if round is over (everyone passed except one)
         if (nextPasses >= currentState.players.length - 1) {
             const lastPlay = currentState.tablePile[currentState.tablePile.length - 1];
             if (lastPlay) roundWinner = lastPlay.playerId;
@@ -1245,7 +1224,6 @@ export default function GanDengYan() {
             showMessage(`${currentState.players[roundWinner].name} 赢了本轮！正在补牌...`, 2000);
             nextPlayers.forEach(p => p.lastAction = null);
 
-            // Deal card if available
             if (nextDeck.length > 0) {
                 const drawnCard = nextDeck.shift()!;
                 const winnerPlayer = nextPlayers[roundWinner];
@@ -1254,18 +1232,12 @@ export default function GanDengYan() {
                 audio.playDeal();
             } else {
                 showMessage("牌堆空了！无法补牌。", 2000);
-                // Increment stalemate counter since deck is empty and a round finished
                 nextRoundsFinishedAfterDeckEmpty += 1;
             }
             
-            // Check for Draw Condition: Deck empty + 2 rounds passed with no winner
             if (nextRoundsFinishedAfterDeckEmpty >= 2) {
-                // Trigger draw outside of reducer (via effect or timeout? No, call handleDraw via callback if possible, 
-                // but handleDraw causes side effects. We need to trigger it.
-                // Since this is inside a state update, we can't call handleDraw directly cleanly.
-                // We'll return a special state and detect it in useEffect or just use setTimeout here is safe enough for logic dispatch
                 setTimeout(() => handleDraw(), 0); 
-                return currentState; // UI will update when handleDraw re-inits
+                return currentState; 
             }
 
             return {
@@ -1330,7 +1302,7 @@ export default function GanDengYan() {
             tablePile: [...prev.tablePile, playedHand],
             lastWinnerIndex: playerIndex,
             passesInARow: 0,
-            roundsFinishedAfterDeckEmpty: 0, // Reset stalemate counter if someone plays
+            roundsFinishedAfterDeckEmpty: 0, 
             bombCount: newBombCount,
             currentPlayerIndex: nextIdx
         };
@@ -1338,13 +1310,11 @@ export default function GanDengYan() {
     setSelectedCardIds([]);
   }, [handleWin, triggerBombToast]);
 
-  // FIX: Ref-based access for network callbacks
   useEffect(() => {
       playHandRef.current = playHand;
       nextTurnRef.current = nextTurn;
   }, [playHand, nextTurn]);
 
-  // Heartbeat Mechanism
   useEffect(() => {
       if (!state.isHost) return;
       const interval = setInterval(() => {
@@ -1355,23 +1325,19 @@ export default function GanDengYan() {
       return () => clearInterval(interval);
   }, [state.isHost]);
 
-  // Redundant State Broadcast when starting new game
   useEffect(() => {
       if (state.isHost && state.status === 'playing') {
-          // Send redundant state updates to ensure all clients wake up and receive the new hand
           [500, 1500].forEach(delay => {
               setTimeout(() => broadcastState(state), delay);
           });
       }
-  }, [state.status, state.isHost, broadcastState]); // Dependencies are important here
+  }, [state.status, state.isHost, broadcastState]);
 
-  // Player Auto-Select / Auto-Pass (Human Assist)
   useEffect(() => {
     if (state.status !== 'playing') return;
     const myId = state.myPlayerId || 0;
     if (state.currentPlayerIndex !== myId) return;
 
-    // Clear any pending timeouts on unmount or re-run
     return () => {
         if (autoPassTimeoutRef.current) {
             clearTimeout(autoPassTimeoutRef.current);
@@ -1386,36 +1352,30 @@ export default function GanDengYan() {
       if (state.currentPlayerIndex !== myId) return;
       
       const me = state.players[myId];
-      if (me.isAi) return; // Should not happen
+      if (me.isAi) return;
 
       const lastHand = state.tablePile.length > 0 ? state.tablePile[state.tablePile.length - 1] : null;
 
       if (lastHand) {
-          // Only auto-assist if following a hand
           const bestMove = calculateAiMove(me.hand, lastHand);
 
           if (bestMove) {
-              // Auto-Select the best cards (Always helpful)
               setSelectedCardIds(bestMove.cards.map(c => c.id));
           } else {
-              // Auto-Pass logic (Only if toggle is enabled)
               if (autoPass) {
                   showMessage("无牌可出，自动过...", 1000);
                   autoPassTimeoutRef.current = window.setTimeout(() => {
                       handleUserPass();
                   }, 1000);
               }
-              // Else: User must manually pass
           }
       }
-      // If Leading (lastHand === null), do not auto-select, let user choose strategy.
-  }, [state.currentPlayerIndex, state.status, state.myPlayerId, state.tablePile, autoPass]); // Re-run when autoPass changes
+  }, [state.currentPlayerIndex, state.status, state.myPlayerId, state.tablePile, autoPass]);
 
 
-  // AI Turn Logic (Only Host runs this)
   useEffect(() => {
     if (state.status !== "playing") return;
-    if (!state.isHost) return; // Only host runs AI
+    if (!state.isHost) return;
 
     const currentPlayer = state.players[state.currentPlayerIndex];
     if (currentPlayer.isAi) {
@@ -1437,15 +1397,12 @@ export default function GanDengYan() {
     };
   }, [state.currentPlayerIndex, state.status, state.players, state.tablePile, nextTurn, playHand, state.isHost]); 
 
-  // Interaction Handlers
   const handleUserPlay = () => {
-    // If Guest, send network request
     const me = state.players[state.myPlayerId || 0];
     const selectedCards = me.hand.filter(c => selectedCardIds.includes(c.id));
     
     const lastHand = state.tablePile.length > 0 ? state.tablePile[state.tablePile.length - 1] : null;
     
-    // Pass hint for ambiguity resolution (Jokers)
     const hintRank = lastHand && lastHand.type === 'STRAIGHT' ? lastHand.primaryRank + 1 : undefined;
     const analysis = analyzeHand(selectedCards, hintRank);
 
@@ -1483,7 +1440,7 @@ export default function GanDengYan() {
     const myId = state.myPlayerId || 0;
     const visualId = (id - myId + totalPlayers) % totalPlayers;
     
-    if (totalPlayers === 2) return "pos-top"; // Vis 1
+    if (totalPlayers === 2) return "pos-top";
     
     if (totalPlayers === 3) {
         return visualId === 1 ? "pos-right" : "pos-left";
@@ -1621,7 +1578,7 @@ export default function GanDengYan() {
                              if (loadingPlayerCount !== null) return;
                              audio.playClick();
                              setLoadingPlayerCount(num);
-                             setTimeout(() => startGame(num), 300); // Visual delay
+                             setTimeout(() => startGame(num), 300); 
                          }}
                          style={{ 
                              padding: "15px 20px", 
@@ -1790,7 +1747,7 @@ export default function GanDengYan() {
              </div>
              
              <div style={{ padding: "20px", background: "#2c3e50", flex: 1 }}>
-               <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1.5fr 60px 60px", gap: "10px", color: "#95a5a6", fontSize: "1rem", marginBottom: "15px", paddingBottom: "10px", borderBottom: "1px solid #34495e", fontWeight: "bold" }}>
+               <div style={{ display: "grid", gridTemplateColumns: "1fr 2.5fr 50px 50px", gap: "10px", color: "#95a5a6", fontSize: "1rem", marginBottom: "15px", paddingBottom: "10px", borderBottom: "1px solid #34495e", fontWeight: "bold" }}>
                   <span style={{ textAlign: "left" }}>玩家</span>
                   <span style={{ textAlign: "right" }}>详情</span>
                   <span style={{ textAlign: "right" }}>变动</span>
@@ -1805,8 +1762,6 @@ export default function GanDengYan() {
                     const isWinner = p.id === state.lastWinnerIndex;
                     let detailText = "";
 
-                    // Calculate score again for display (logic duplicated from calcScores but necessary for display)
-                    // Better approach: use the history we just pushed
                     const lastHistory = state.gameHistory[state.gameHistory.length - 1] || {};
                     roundScore = lastHistory[p.id] || 0;
 
@@ -1822,7 +1777,7 @@ export default function GanDengYan() {
                     }
 
                     return (
-                       <div key={p.id} style={{ display: "grid", gridTemplateColumns: "1.2fr 1.5fr 60px 60px", gap: "10px", alignItems: "center", background: isWinner ? "rgba(255, 193, 7, 0.2)" : "transparent", padding: "10px 10px", borderRadius: "8px", borderBottom: "1px solid #34495e" }}>
+                       <div key={p.id} style={{ display: "grid", gridTemplateColumns: "1fr 2.5fr 50px 50px", gap: "10px", alignItems: "center", background: isWinner ? "rgba(255, 193, 7, 0.2)" : "transparent", padding: "10px 10px", borderRadius: "8px", borderBottom: "1px solid #34495e" }}>
                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                             <span style={{ fontWeight: "bold", color: "white", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</span>
                             {isWinner && <span style={{ fontSize: "1.2rem" }}>🏆</span>}

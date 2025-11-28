@@ -33,7 +33,7 @@
 
         #root {
             width: 100vw;
-            height: 100dvh; /* Changed from 100vh to 100dvh for mobile browsers */
+            height: 100dvh; /* Changed to 100dvh to fix mobile toolbar overlap */
             display: flex;
             flex-direction: column;
         }
@@ -89,7 +89,7 @@
              100% { transform: translate(-50%, -50%) scale(1); }
         }
 
-        /* Flying Card Animations - Fly from Avatar (Scale Up) */
+        /* Flying Card Animations */
         @keyframes slideInBottom {
             from { transform: translateY(40vh) scale(0.6); opacity: 0.5; }
             to { transform: translateY(0) scale(1); opacity: 1; }
@@ -107,7 +107,6 @@
             to { transform: translateX(0) scale(1); opacity: 1; }
         }
 
-        /* Using ease-out for a snappy arrival */
         .anim-slide-bottom { animation: slideInBottom 0.35s ease-out forwards; }
         .anim-slide-top { animation: slideInTop 0.35s ease-out forwards; }
         .anim-slide-left { animation: slideInLeft 0.35s ease-out forwards; }
@@ -162,16 +161,16 @@
         /* Bubbles & Badges */
         .pass-bubble {
             position: absolute;
-            background: rgba(0, 0, 0, 0.6); /* Neutral dark background */
+            background: rgba(0, 0, 0, 0.6);
             color: #fff;
-            padding: 4px 10px; /* Smaller padding */
-            border-radius: 12px; /* Pill shape */
-            font-size: 12px; /* Smaller font */
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
             top: -10px;
             right: -10px;
             white-space: nowrap;
             width: fit-content;
-            border: 1px solid rgba(255,255,255,0.5); /* Subtle border */
+            border: 1px solid rgba(255,255,255,0.5);
             animation: popIn 0.2s ease-out;
             z-index: 20;
         }
@@ -212,19 +211,15 @@
             font-weight: bold;
             color: #d32f2f;
             text-align: center;
-            white-space: pre; /* 强制只在 \n 处换行 */
+            white-space: pre;
             line-height: 1.2;
-            
-            /* Desktop Default Shadow */
             text-shadow: 2px 2px 0 #fff, -2px -2px 0 #fff, 2px -2px 0 #fff, -2px 2px 0 #fff;
         }
 
         /* Mobile Adjustments */
         @media (max-width: 600px) {
             .bomb-text {
-                font-size: 1.5rem; /* 小屏适配 */
-                
-                /* 手机端抗锯齿优化：使用描边代替厚重阴影 */
+                font-size: 1.5rem;
                 text-shadow: 0 2px 4px rgba(0,0,0,0.3);
                 -webkit-text-stroke: 1.5px white;
                 paint-order: stroke fill;
