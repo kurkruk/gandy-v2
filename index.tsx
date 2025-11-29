@@ -72,7 +72,7 @@ const BOT_COLORS = ["#ef5350", "#ab47bc", "#5c6bc0", "#26c6da", "#66bb6a", "#ffa
 const BOT_AVATARS = ["🐼", "🐨", "🦊", "🐶", "🐱", "🐰", "🐹", "🐯"];
 const APP_ID_PREFIX = "gdy-game-v1-"; // Unique prefix to avoid collision on public PeerServer
 
-// NEW: Tencent & Xiaomi STUN servers for better China LAN connectivity
+// NEW: Tencent & Xiaomi STUN servers + Metered.ca TURN for global connectivity
 const PEER_CONFIG = {
   iceServers: [
     { urls: 'stun:stun.qq.com:3478' },     // Tencent
@@ -80,7 +80,15 @@ const PEER_CONFIG = {
     { urls: 'stun:stun.netease.com:3478' }, // Netease
     { urls: 'stun:stun.baidu.com:3478' },   // Baidu
     { urls: 'stun:stun.hitv.com' },
-    { urls: 'stun:stun.l.google.com:19302' } // Fallback
+    { urls: 'stun:stun.l.google.com:19302' }, // Fallback
+    
+    // 👇 Metered.ca TURN Configuration 👇
+    // Please replace the placeholders below with your actual credentials from dashboard.metered.ca
+    {
+      urls: "turn:global.turn.metered.ca:80",
+      username: "9286ee365437acb98d2b58ea",
+      credential: "i18kwEht7+eB1pJ5"
+    }
   ],
   sdpSemantics: 'unified-plan'
 };
@@ -1176,7 +1184,7 @@ export default function GanDengYan() {
       status: "celebrating", 
       players: currentPlayers, 
       bombCount: finalBombCount, 
-      lastWinnerIndex: winnerIdx,
+      lastWinnerIndex: winnerIdx, 
       tablePile: [...prev.tablePile, lastHand] 
     }));
     
@@ -1299,7 +1307,7 @@ export default function GanDengYan() {
         return {
             ...prev,
             players: newPlayers,
-            tablePile: [...prev.tablePile, playedHand],
+            tablePile: [...prev.tablePile, lastHand],
             lastWinnerIndex: playerIndex,
             passesInARow: 0,
             roundsFinishedAfterDeckEmpty: 0, 
@@ -1677,9 +1685,9 @@ export default function GanDengYan() {
                        <thead>
                            <tr style={{ borderBottom: "1px solid #777" }}>
                                <th style={{ padding: "10px", textAlign: "left", background: "#34495e", position: "sticky", top: 0, left: 0, zIndex: 10, minWidth: "100px", borderRight: "2px solid #555" }}>玩家</th>
-                               <th style={{ padding: "10px", background: "#34495e", position: "sticky", top: 0, zIndex: 5, color: "#fbc02d", borderRight: "1px solid #555" }}>累计</th>
+                               <th style={{ padding: "10px", textAlign: "right", background: "#34495e", position: "sticky", top: 0, zIndex: 5, color: "#fbc02d", borderRight: "1px solid #555" }}>累计</th>
                                {state.gameHistory.map((_, i) => (
-                                   <th key={i} style={{ padding: "10px", minWidth: "60px", background: "#34495e", color: "white", border: "1px solid #555", position: "sticky", top: 0, zIndex: 5 }}>
+                                   <th key={i} style={{ padding: "10px", textAlign: "right", minWidth: "60px", background: "#34495e", color: "white", border: "1px solid #555", position: "sticky", top: 0, zIndex: 5 }}>
                                        R{i+1}
                                    </th>
                                ))}
@@ -1694,14 +1702,14 @@ export default function GanDengYan() {
                                        <td style={{ padding: "10px", position: "sticky", left: 0, background: pIdx % 2 === 0 ? "#263544" : "#2c3e50", zIndex: 2, borderRight: "2px solid #555", fontWeight: "bold" }}>
                                            {p.name}
                                        </td>
-                                       <td style={{ padding: "10px", textAlign: "center", fontWeight: "900", color: totalColor, borderRight: "1px solid #555", fontSize: "1.1rem" }}>
+                                       <td style={{ padding: "10px", textAlign: "right", fontWeight: "900", color: totalColor, borderRight: "1px solid #555", fontSize: "1.1rem" }}>
                                            {total > 0 ? "+" : ""}{total}
                                        </td>
                                        {state.gameHistory.map((h, hIdx) => {
                                            const val = h[p.id] ?? 0;
                                            const color = val > 0 ? "#2ecc71" : (val < 0 ? "#ff5252" : "#ffffff");
                                            return (
-                                               <td key={hIdx} style={{ padding: "10px", textAlign: "center", border: "1px solid #555", color: color, fontWeight: "bold" }}>
+                                               <td key={hIdx} style={{ padding: "10px", textAlign: "right", border: "1px solid #555", color: color, fontWeight: "bold" }}>
                                                    {val > 0 ? "+" : ""}{val}
                                                </td>
                                            );
@@ -1748,10 +1756,10 @@ export default function GanDengYan() {
              
              <div style={{ padding: "20px", background: "#2c3e50", flex: 1 }}>
                <div style={{ display: "grid", gridTemplateColumns: "1fr 2.5fr 50px 50px", gap: "10px", color: "#95a5a6", fontSize: "1rem", marginBottom: "15px", paddingBottom: "10px", borderBottom: "1px solid #34495e", fontWeight: "bold" }}>
-                  <span style={{ textAlign: "left" }}>玩家</span>
-                  <span style={{ textAlign: "right" }}>详情</span>
-                  <span style={{ textAlign: "right" }}>变动</span>
-                  <span style={{ textAlign: "right" }}>总分</span>
+                  <div style={{ textAlign: "left" }}>玩家</div>
+                  <div style={{ textAlign: "right" }}>详情</div>
+                  <div style={{ textAlign: "right" }}>变动</div>
+                  <div style={{ textAlign: "right" }}>总分</div>
                </div>
                
                <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
