@@ -954,7 +954,7 @@ export default function GanDengYan() {
               conn.on('error', (e) => addLog(`Conn Err: ${e}`));
               
               // Clean up if not opened in time
-              setTimeout(() => { if (!conn.open) conn.close(); }, 500);
+              setTimeout(() => { if (!conn.open) conn.close(); }, 5000);
           });
           
           hostPeer.on('error', (e) => {
