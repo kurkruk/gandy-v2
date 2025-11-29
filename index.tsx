@@ -83,7 +83,6 @@ const PEER_CONFIG = {
     { urls: 'stun:stun.l.google.com:19302' }, // Fallback
     
     // 👇 Metered.ca TURN Configuration 👇
-    // Please replace the placeholders below with your actual credentials from dashboard.metered.ca
     {
       urls: "turn:global.turn.metered.ca:80",
       username: "9286ee365437acb98d2b58ea",
@@ -750,12 +749,12 @@ export default function GanDengYan() {
     if (peer) return peer;
     addLog("初始化P2P网络(含腾讯STUN)...");
     
-    // NEW: Use config with China STUN servers
-    const newPeer = new Peer({
+    // FIX: Pass undefined as first arg to ensure random ID generation
+    const newPeer = new Peer(undefined, {
        config: PEER_CONFIG,
        debug: 1,
        secure: true
-    } as any);
+    });
     
     newPeer.on('open', (id) => {
       setMyPeerId(id);
@@ -979,10 +978,12 @@ export default function GanDengYan() {
       
       setTimeout(() => {
           const fullId = APP_ID_PREFIX + joinRoomId;
-          const guestPeer = new Peer({
+          
+          // FIX: Pass undefined as first arg to ensure random ID generation
+          const guestPeer = new Peer(undefined, {
               config: PEER_CONFIG,
               secure: true
-          } as any);
+          });
           
           guestPeer.on('open', (id) => {
               setMyPeerId(id);
@@ -1307,7 +1308,7 @@ export default function GanDengYan() {
         return {
             ...prev,
             players: newPlayers,
-            tablePile: [...prev.tablePile, lastHand],
+            tablePile: [...prev.tablePile, playedHand],
             lastWinnerIndex: playerIndex,
             passesInARow: 0,
             roundsFinishedAfterDeckEmpty: 0, 
