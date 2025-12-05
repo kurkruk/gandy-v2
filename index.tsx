@@ -1490,9 +1490,19 @@ export default function GanDengYan() {
   const getAnimClass = (pid: number) => {
       if (pid === myId) return "anim-slide-bottom";
       const pos = getOpponentPositionStyle(pid, state.players.length);
-      if (pos.includes("left")) return "anim-slide-left";
-      if (pos.includes("right")) return "anim-slide-right";
-      return "anim-slide-top";
+      
+      switch (pos) {
+          case "pos-top-left": return "anim-slide-top-left";
+          case "pos-top-right": return "anim-slide-top-right";
+          case "pos-left-high": return "anim-slide-left-high";
+          case "pos-left-low": return "anim-slide-left-low";
+          case "pos-right-high": return "anim-slide-right-high";
+          case "pos-right-low": return "anim-slide-right-low";
+          case "pos-left": return "anim-slide-left";
+          case "pos-right": return "anim-slide-right";
+          case "pos-top": return "anim-slide-top";
+          default: return "anim-slide-top";
+      }
   };
   
   const copyReportToClipboard = () => {
@@ -1681,7 +1691,6 @@ export default function GanDengYan() {
                </div>
                
                <div style={{ overflow: "auto", flex: 1, minHeight: "150px" }}>
-                   {/* Layout: Row = Player, Cols = Cumulative, R1, R2... */}
                    <table style={{ width: "100%", borderCollapse: "collapse", color: "white", fontSize: "0.9rem" }}>
                        <thead>
                            <tr style={{ borderBottom: "1px solid #777" }}>
@@ -1700,7 +1709,7 @@ export default function GanDengYan() {
                                const totalColor = total > 0 ? "#fbc02d" : (total < 0 ? "#ff5252" : "#ffffff");
                                return (
                                    <tr key={p.id} style={{ borderBottom: "1px solid #444", background: pIdx % 2 === 0 ? "rgba(0,0,0,0.2)" : "transparent" }}>
-                                       <td style={{ padding: "10px", position: "sticky", left: 0, background: pIdx % 2 === 0 ? "#263544" : "#2c3e50", zIndex: 2, borderRight: "2px solid #555", fontWeight: "bold" }}>
+                                       <td style={{ padding: "10px", position: "sticky", left: 0, background: pIdx % 2 === 0 ? "#263544" : "#2c3e50", zIndex: 2, borderRight: "2px solid #555", fontWeight: "bold", textAlign: "left" }}>
                                            {p.name}
                                        </td>
                                        <td style={{ padding: "10px", textAlign: "right", fontWeight: "900", color: totalColor, borderRight: "1px solid #555", fontSize: "1.1rem" }}>
@@ -1724,7 +1733,6 @@ export default function GanDengYan() {
                
                <div style={{ marginTop: "15px", display: "flex", justifyContent: "center", flexDirection: "column", alignItems: "center", gap: "5px" }}>
                    <button onClick={copyReportToClipboard} style={{ padding: "10px 20px", background: "#039be5", color: "white", border: "none", borderRadius: "5px", cursor: "pointer", fontWeight: "bold" }}>📋 复制战绩</button>
-                   <span style={{ fontSize: "0.7rem", color: "#666" }}>(调试: P={state.players.length}, H={state.gameHistory.length})</span>
                </div>
            </div>
         </div>
@@ -1787,7 +1795,7 @@ export default function GanDengYan() {
 
                     return (
                        <div key={p.id} style={{ display: "grid", gridTemplateColumns: "1fr 2.5fr 50px 50px", gap: "10px", alignItems: "center", background: isWinner ? "rgba(255, 193, 7, 0.2)" : "transparent", padding: "10px 10px", borderRadius: "8px", borderBottom: "1px solid #34495e" }}>
-                         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                         <div style={{ display: "flex", alignItems: "center", gap: "8px", textAlign: "left" }}>
                             <span style={{ fontWeight: "bold", color: "white", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</span>
                             {isWinner && <span style={{ fontSize: "1.2rem" }}>🏆</span>}
                          </div>
@@ -1875,7 +1883,7 @@ export default function GanDengYan() {
       </div>
 
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
-        <div style={{ display: "flex", marginLeft: "-36px", transform: "scale(1.2)" }}>
+        <div style={{ display: "flex", marginLeft: "-36px", transform: "scale(1.2) translateY(73px)" }}>
           {state.tablePile.length === 0 ? (
              <div style={{ marginLeft: "36px", opacity: 0.3, border: "2px dashed #fff", width: "60px", height: "84px", borderRadius: "6px", display: "flex", alignItems: "center", justifyContent: "center" }}>空</div>
           ) : (
@@ -1890,12 +1898,12 @@ export default function GanDengYan() {
           )}
         </div>
         
-        <div style={{ position: "absolute", bottom: "50px", background: "rgba(0,0,0,0.6)", padding: "8px 20px", borderRadius: "20px", border: "1px solid rgba(255,255,255,0.2)" }}>
+        <div style={{ position: "absolute", bottom: "-17px", background: "rgba(0,0,0,0.6)", padding: "8px 20px", borderRadius: "20px", border: "1px solid rgba(255,255,255,0.2)", zIndex: 40 }}>
            <span style={{ marginRight: "15px", color: "#e57373" }}>炸弹数: {state.bombCount}</span>
            <span style={{ color: "#fbc02d", fontWeight: "bold" }}>倍数: x{Math.pow(2, state.bombCount)}</span>
         </div>
         
-        <div style={{ position: "absolute", top: "25%", background: "rgba(255,255,255,0.9)", color: "#000", padding: "8px 16px", borderRadius: "4px", fontWeight: "bold", display: lastMessage ? "block" : "none", maxWidth: "80%", textAlign: "center", boxShadow: "0 2px 10px rgba(0,0,0,0.3)" }}>
+        <div style={{ position: "absolute", bottom: "-58px", background: "rgba(255,255,255,0.9)", color: "#000", padding: "8px 16px", borderRadius: "4px", fontWeight: "bold", display: lastMessage ? "block" : "none", maxWidth: "90%", textAlign: "center", boxShadow: "0 2px 10px rgba(0,0,0,0.3)", zIndex: 40 }}>
           {lastMessage}
         </div>
       </div>

@@ -89,28 +89,31 @@
              100% { transform: translate(-50%, -50%) scale(1); }
         }
 
-        /* Flying Card Animations */
-        @keyframes slideInBottom {
-            from { transform: translateY(40vh) scale(0.6); opacity: 0.5; }
-            to { transform: translateY(0) scale(1); opacity: 1; }
-        }
-        @keyframes slideInTop {
-            from { transform: translateY(-40vh) scale(0.1); opacity: 0.5; }
-            to { transform: translateY(0) scale(1); opacity: 1; }
-        }
-        @keyframes slideInLeft {
-            from { transform: translateX(-45vw) scale(0.1); opacity: 0.5; }
-            to { transform: translateX(0) scale(1); opacity: 1; }
-        }
-        @keyframes slideInRight {
-            from { transform: translateX(45vw) scale(0.1); opacity: 0.5; }
-            to { transform: translateX(0) scale(1); opacity: 1; }
-        }
+        /* Flying Card Animations - Precise Trajectories */
+        @keyframes slideInBottom { from { transform: translateY(40vh) scale(0.6); opacity: 0.5; } to { transform: translateY(0) scale(1); opacity: 1; } }
+        @keyframes slideInTop { from { transform: translateY(-40vh) scale(0.1); opacity: 0.5; } to { transform: translateY(0) scale(1); opacity: 1; } }
+        @keyframes slideInLeft { from { transform: translateX(-45vw) scale(0.1); opacity: 0.5; } to { transform: translateX(0) scale(1); opacity: 1; } }
+        @keyframes slideInRight { from { transform: translateX(45vw) scale(0.1); opacity: 0.5; } to { transform: translateX(0) scale(1); opacity: 1; } }
+        
+        /* New Precise Animations */
+        @keyframes slideInTopLeft { from { transform: translate(-30vw, -40vh) scale(0.1); opacity: 0.5; } to { transform: translate(0, 0) scale(1); opacity: 1; } }
+        @keyframes slideInTopRight { from { transform: translate(30vw, -40vh) scale(0.1); opacity: 0.5; } to { transform: translate(0, 0) scale(1); opacity: 1; } }
+        @keyframes slideInLeftHigh { from { transform: translate(-45vw, -20vh) scale(0.1); opacity: 0.5; } to { transform: translate(0, 0) scale(1); opacity: 1; } }
+        @keyframes slideInLeftLow { from { transform: translate(-45vw, 20vh) scale(0.1); opacity: 0.5; } to { transform: translate(0, 0) scale(1); opacity: 1; } }
+        @keyframes slideInRightHigh { from { transform: translate(45vw, -20vh) scale(0.1); opacity: 0.5; } to { transform: translate(0, 0) scale(1); opacity: 1; } }
+        @keyframes slideInRightLow { from { transform: translate(45vw, 20vh) scale(0.1); opacity: 0.5; } to { transform: translate(0, 0) scale(1); opacity: 1; } }
 
         .anim-slide-bottom { animation: slideInBottom 0.35s ease-out forwards; }
         .anim-slide-top { animation: slideInTop 0.35s ease-out forwards; }
         .anim-slide-left { animation: slideInLeft 0.35s ease-out forwards; }
         .anim-slide-right { animation: slideInRight 0.35s ease-out forwards; }
+        
+        .anim-slide-top-left { animation: slideInTopLeft 0.35s ease-out forwards; }
+        .anim-slide-top-right { animation: slideInTopRight 0.35s ease-out forwards; }
+        .anim-slide-left-high { animation: slideInLeftHigh 0.35s ease-out forwards; }
+        .anim-slide-left-low { animation: slideInLeftLow 0.35s ease-out forwards; }
+        .anim-slide-right-high { animation: slideInRightHigh 0.35s ease-out forwards; }
+        .anim-slide-right-low { animation: slideInRightLow 0.35s ease-out forwards; }
 
         .animate-pop { animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
         .animate-deal { animation: deal 0.4s ease-out forwards; }
@@ -146,17 +149,20 @@
             width: 80px;
         }
         
-        .pos-left { top: 50%; left: 10px; transform: translateY(-50%); }
-        .pos-left-low { bottom: 30%; left: 15px; }
-        .pos-left-high { top: 25%; left: 15px; }
+        /* FIX: Use margin instead of transform for centering to avoid conflict with JS scale animation */
+        .pos-left { top: 50%; left: 10px; margin-top: -55px; } 
+        .pos-left-low { bottom: 10px; left: 10px; }
+        .pos-left-high { top: 42%; left: 10px; }
         
-        .pos-right { top: 50%; right: 10px; transform: translateY(-50%); }
-        .pos-right-low { bottom: 30%; right: 15px; }
-        .pos-right-high { top: 25%; right: 15px; }
+        .pos-right { top: 50%; right: 10px; margin-top: -55px; } 
+        .pos-right-low { bottom: 10px; right: 10px; }
+        .pos-right-high { top: 42%; right: 10px; }
         
-        .pos-top { top: 10px; left: 50%; transform: translateX(-50%); }
-        .pos-top-left { top: 10px; left: 32%; }
-        .pos-top-right { top: 10px; right: 32%; }
+        /* FIX: Center horizontally with margin-left half of width (80px/2 = 40px) */
+        .pos-top { top: 85px; left: 50%; margin-left: -40px; } 
+        
+        .pos-top-left { top: 85px; left: 20%; }
+        .pos-top-right { top: 85px; right: 20%; }
 
         /* Bubbles & Badges */
         .pass-bubble {
@@ -230,5 +236,6 @@
 <body>
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
+    <!-- Removed importmap for clean Vite build -->
 </body>
 </html>
