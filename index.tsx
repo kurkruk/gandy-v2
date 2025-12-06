@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback, memo } from "react";
 import { createRoot } from "react-dom/client";
 import Peer, { DataConnection } from "peerjs";
@@ -85,8 +86,8 @@ const PEER_CONFIG = {
     // 👇 Metered.ca TURN Configuration 👇
     {
       urls: "turn:global.turn.metered.ca:80",
-      username: "9286ee365437acb98d2b58ea",
-      credential: "i18kwEht7+eB1pJ5"
+      username: "REPLACE_WITH_YOUR_USERNAME",
+      credential: "REPLACE_WITH_YOUR_PASSWORD"
     }
   ],
   sdpSemantics: 'unified-plan'
@@ -230,6 +231,8 @@ const analyzeHand = (cards: Card[], targetRankHint?: number): { type: HandType; 
     if (len >= 3) validSeqs.push([15, ...Array.from({length: len-1}, (_, i) => 3+i)]); 
     
     for (let start = 3; start <= 14 - len + 1; start++) {
+      // FIX: Ensure Max rank is 14 (A) for normal straights, banning 13-14-15 (K-A-2)
+      if (start + len - 1 > 14) continue; 
       validSeqs.push(Array.from({length: len}, (_, i) => start + i));
     }
 
@@ -373,6 +376,9 @@ const calculateAiMove = (hand: Card[], lastHand: PlayedHand | null): { cards: Ca
                 seq.push(groups[ranks[i+j]]);
             }
             if (valid) {
+                 // FIX: Prevent K-A-2 (15) construction
+                 if (current + minLen - 1 > 14) continue; 
+
                 if (targetRank !== null) {
                     if (current === targetRank + 1) return seq;
                 } else {
@@ -399,7 +405,8 @@ const calculateAiMove = (hand: Card[], lastHand: PlayedHand | null): { cards: Ca
 
         for (const start of startRanks) {
             const desiredSeq = Array.from({length: minLen}, (_, i) => start + i);
-            if (desiredSeq[desiredSeq.length-1] > 15) continue; 
+            // FIX: Ensure Max rank is 14 (A), banning K-A-2
+            if (desiredSeq[desiredSeq.length-1] > 14) continue; 
 
             const found: Card[] = [];
             let missing = 0;
@@ -562,7 +569,7 @@ const CardView: React.FC<{ card: Card; selected?: boolean; small?: boolean; onCl
               </div>
               <div className="card-suit">{suitIcon}</div>
            </div>
-           <div className="card-center" style={{ fontSize: small ? "1.5rem" : "2rem" }}>{suitIcon}</div>
+           <div className="card-center" style={{ fontSize: small ? "1.5rem" : "2.5rem" }}>{suitIcon}</div>
            <div style={{ position: "absolute", bottom: "4px", right: "4px", transform: "rotate(180deg)", display: "flex", flexDirection: "column", alignItems: "center", lineHeight: "1" }}>
               <div className="card-value" style={isTen ? { letterSpacing: "-2px", marginLeft: "-2px" } : {}}>
                   {card.display}
@@ -793,6 +800,11 @@ export default function GanDengYan() {
 
     newPeer.on('error', (err) => {
         console.error(err);
+        // Suppress network errors if game is running
+        if ((err.type === 'network' || err.type === 'peer-unavailable' || err.type === 'socket-closed') && connectionsRef.current.length > 0) {
+            addLog(`(后台忽略) 信令波动: ${err.type}`);
+            return;
+        }
         addLog(`全局错误: ${err.type}`);
         showMessage(`网络错误: ${err.type}`, 3000);
     });
@@ -953,8 +965,8 @@ export default function GanDengYan() {
               });
               conn.on('error', (e) => addLog(`Conn Err: ${e}`));
               
-              // Clean up if not opened in time
-              setTimeout(() => { if (!conn.open) conn.close(); }, 5000);
+              // Clean up if not opened in time, Extended timeout for reliability
+              setTimeout(() => { if (!conn.open) conn.close(); }, 15000);
           });
           
           hostPeer.on('error', (e) => {
@@ -1039,6 +1051,9 @@ export default function GanDengYan() {
           });
           
           guestPeer.on('error', (e) => {
+              // Suppress errors if connected
+              if ((e.type === 'network' || e.type === 'peer-unavailable') && connectionsRef.current.length > 0) return;
+              
               addLog(`Guest Error: ${e.type}`);
               if (e.type === 'peer-unavailable') {
                   showMessage("房间不存在", 2000);
@@ -1324,6 +1339,7 @@ export default function GanDengYan() {
       nextTurnRef.current = nextTurn;
   }, [playHand, nextTurn]);
 
+  // Heartbeat & Redundant Broadcast
   useEffect(() => {
       if (!state.isHost) return;
       const interval = setInterval(() => {
@@ -1333,6 +1349,18 @@ export default function GanDengYan() {
       }, 3000);
       return () => clearInterval(interval);
   }, [state.isHost]);
+  
+  // Guest side heartbeat
+  useEffect(() => {
+      if (state.isHost) return;
+      if (state.status === "lobby") return;
+      const interval = setInterval(() => {
+          connectionsRef.current.forEach(conn => {
+              if(conn.open) conn.send({ type: "HEARTBEAT" });
+          });
+      }, 3000);
+      return () => clearInterval(interval);
+  }, [state.isHost, state.status]);
 
   useEffect(() => {
       if (state.isHost && state.status === 'playing') {

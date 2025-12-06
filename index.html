@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -90,30 +91,33 @@
         }
 
         /* Flying Card Animations - Precise Trajectories */
+        /* Self & Standard Orthogonal */
         @keyframes slideInBottom { from { transform: translateY(40vh) scale(0.6); opacity: 0.5; } to { transform: translateY(0) scale(1); opacity: 1; } }
         @keyframes slideInTop { from { transform: translateY(-40vh) scale(0.1); opacity: 0.5; } to { transform: translateY(0) scale(1); opacity: 1; } }
         @keyframes slideInLeft { from { transform: translateX(-45vw) scale(0.1); opacity: 0.5; } to { transform: translateX(0) scale(1); opacity: 1; } }
         @keyframes slideInRight { from { transform: translateX(45vw) scale(0.1); opacity: 0.5; } to { transform: translateX(0) scale(1); opacity: 1; } }
         
-        /* New Precise Animations */
+        /* New Precise Animations for Corners and High/Low Sides */
         @keyframes slideInTopLeft { from { transform: translate(-30vw, -40vh) scale(0.1); opacity: 0.5; } to { transform: translate(0, 0) scale(1); opacity: 1; } }
         @keyframes slideInTopRight { from { transform: translate(30vw, -40vh) scale(0.1); opacity: 0.5; } to { transform: translate(0, 0) scale(1); opacity: 1; } }
-        @keyframes slideInLeftHigh { from { transform: translate(-45vw, -20vh) scale(0.1); opacity: 0.5; } to { transform: translate(0, 0) scale(1); opacity: 1; } }
-        @keyframes slideInLeftLow { from { transform: translate(-45vw, 20vh) scale(0.1); opacity: 0.5; } to { transform: translate(0, 0) scale(1); opacity: 1; } }
-        @keyframes slideInRightHigh { from { transform: translate(45vw, -20vh) scale(0.1); opacity: 0.5; } to { transform: translate(0, 0) scale(1); opacity: 1; } }
-        @keyframes slideInRightLow { from { transform: translate(45vw, 20vh) scale(0.1); opacity: 0.5; } to { transform: translate(0, 0) scale(1); opacity: 1; } }
-
-        .anim-slide-bottom { animation: slideInBottom 0.35s ease-out forwards; }
-        .anim-slide-top { animation: slideInTop 0.35s ease-out forwards; }
-        .anim-slide-left { animation: slideInLeft 0.35s ease-out forwards; }
-        .anim-slide-right { animation: slideInRight 0.35s ease-out forwards; }
         
-        .anim-slide-top-left { animation: slideInTopLeft 0.35s ease-out forwards; }
-        .anim-slide-top-right { animation: slideInTopRight 0.35s ease-out forwards; }
-        .anim-slide-left-high { animation: slideInLeftHigh 0.35s ease-out forwards; }
-        .anim-slide-left-low { animation: slideInLeftLow 0.35s ease-out forwards; }
-        .anim-slide-right-high { animation: slideInRightHigh 0.35s ease-out forwards; }
-        .anim-slide-right-low { animation: slideInRightLow 0.35s ease-out forwards; }
+        /* Adjusted for lower table pile position */
+        @keyframes slideInLeftHigh { from { transform: translate(-45vw, -15vh) scale(0.1); opacity: 0.5; } to { transform: translate(0, 0) scale(1); opacity: 1; } }
+        @keyframes slideInLeftLow { from { transform: translate(-45vw, 30vh) scale(0.1); opacity: 0.5; } to { transform: translate(0, 0) scale(1); opacity: 1; } }
+        @keyframes slideInRightHigh { from { transform: translate(45vw, -15vh) scale(0.1); opacity: 0.5; } to { transform: translate(0, 0) scale(1); opacity: 1; } }
+        @keyframes slideInRightLow { from { transform: translate(45vw, 30vh) scale(0.1); opacity: 0.5; } to { transform: translate(0, 0) scale(1); opacity: 1; } }
+
+        .anim-slide-bottom { animation: slideInBottom 0.3s ease-out forwards; }
+        .anim-slide-top { animation: slideInTop 0.3s ease-out forwards; }
+        .anim-slide-left { animation: slideInLeft 0.3s ease-out forwards; }
+        .anim-slide-right { animation: slideInRight 0.3s ease-out forwards; }
+        
+        .anim-slide-top-left { animation: slideInTopLeft 0.3s ease-out forwards; }
+        .anim-slide-top-right { animation: slideInTopRight 0.3s ease-out forwards; }
+        .anim-slide-left-high { animation: slideInLeftHigh 0.3s ease-out forwards; }
+        .anim-slide-left-low { animation: slideInLeftLow 0.3s ease-out forwards; }
+        .anim-slide-right-high { animation: slideInRightHigh 0.3s ease-out forwards; }
+        .anim-slide-right-low { animation: slideInRightLow 0.3s ease-out forwards; }
 
         .animate-pop { animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
         .animate-deal { animation: deal 0.4s ease-out forwards; }
@@ -150,17 +154,20 @@
         }
         
         /* FIX: Use margin instead of transform for centering to avoid conflict with JS scale animation */
-        .pos-left { top: 50%; left: 10px; margin-top: -55px; } 
+        /* FIX: Use calc(50% + 73px) to align with table pile which is translated Y 73px */
+        .pos-left { top: calc(50% + 73px); left: 10px; margin-top: -55px; } 
         .pos-left-low { bottom: 10px; left: 10px; }
         .pos-left-high { top: 42%; left: 10px; }
         
-        .pos-right { top: 50%; right: 10px; margin-top: -55px; } 
+        /* FIX: Use calc(50% + 73px) */
+        .pos-right { top: calc(50% + 73px); right: 10px; margin-top: -55px; } 
         .pos-right-low { bottom: 10px; right: 10px; }
         .pos-right-high { top: 42%; right: 10px; }
         
         /* FIX: Center horizontally with margin-left half of width (80px/2 = 40px) */
         .pos-top { top: 85px; left: 50%; margin-left: -40px; } 
         
+        /* 7-Player Top Positions - Spaced out to 20% */
         .pos-top-left { top: 85px; left: 20%; }
         .pos-top-right { top: 85px; right: 20%; }
 
@@ -236,6 +243,5 @@
 <body>
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
-    <!-- Removed importmap for clean Vite build -->
 </body>
 </html>
