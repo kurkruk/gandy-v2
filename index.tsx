@@ -835,7 +835,21 @@ export default function GanDengYan() {
       if (data.type === "PLAYER_JOIN") {
          addLog(`玩家 ${data.name} 加入`);
          setGameState(prev => {
-             // Deduplicate
+             // Deduplicate OR Reconnect existing player
+             const existingPlayer = prev.players.find(p => p.name === data.name);
+             
+             if (existingPlayer) {
+                 // RECONNECT LOGIC
+                 addLog(`玩家 ${data.name} 重连成功`);
+                 const updatedPlayers = prev.players.map(p => 
+                     p.name === data.name ? { ...p, peerId: data.peerId } : p
+                 );
+                 const nextState = { ...prev, players: updatedPlayers };
+                 if (conn.open) conn.send({ type: "SYNC_STATE", state: nextState });
+                 return nextState;
+             }
+             
+             // New Player Logic
              if (prev.players.some(p => p.peerId === data.peerId)) return prev;
 
              const newPId = prev.players.length;
@@ -1220,15 +1234,17 @@ export default function GanDengYan() {
       showMessage(msg, 3000);
       broadcastMessage(msg, 3000);
 
+      // Create a zero-delta history entry for the draw
+      const zeroDeltas: {[k:number]:number} = {};
+      state.players.forEach(p => zeroDeltas[p.id] = 0);
+
       setGameState(prev => ({
           ...prev,
-          lastWinnerIndex: -1
+          lastWinnerIndex: -1,
+          status: "scoring", // Go to scoring screen instead of auto-restart
+          gameHistory: [...prev.gameHistory, zeroDeltas]
       }));
-
-      setTimeout(() => {
-          startGame(state.players.length, state.scores);
-      }, 3000);
-  }, [state.scores, state.players.length, showMessage, broadcastMessage]);
+  }, [state.scores, state.players, showMessage, broadcastMessage]);
 
   const nextTurn = useCallback((passed: boolean) => {
     setGameState(currentState => {
@@ -1256,6 +1272,7 @@ export default function GanDengYan() {
                 audio.playDeal();
             } else {
                 showMessage("牌堆空了！无法补牌。", 2000);
+                // Only increment stalemate counter if deck is empty AND round finished
                 nextRoundsFinishedAfterDeckEmpty += 1;
             }
             
@@ -1515,6 +1532,7 @@ export default function GanDengYan() {
     return "pos-top";
   };
   
+  // FIX: Precise animation mapping
   const getAnimClass = (pid: number) => {
       if (pid === myId) return "anim-slide-bottom";
       const pos = getOpponentPositionStyle(pid, state.players.length);
