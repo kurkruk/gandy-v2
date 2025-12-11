@@ -98,6 +98,7 @@ const PEER_CONFIG = {
 class SoundManager {
   ctx: AudioContext | null = null;
   muted: boolean = false;
+  voices: SpeechSynthesisVoice[] = [];
 
   init() {
     if (!this.ctx) {
@@ -105,6 +106,12 @@ class SoundManager {
     }
     if (this.ctx.state === 'suspended') {
       this.ctx.resume();
+    }
+    // Load voices
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+        const load = () => { this.voices = window.speechSynthesis.getVoices(); };
+        load();
+        window.speechSynthesis.onvoiceschanged = load;
     }
   }
 
@@ -129,7 +136,27 @@ class SoundManager {
   playClick() { this.playTone(800, 'sine', 0.05, 0.05); }
   playDeal() { this.playTone(600, 'triangle', 0.05, 0.05); }
   playCard() { this.playTone(400, 'sine', 0.1, 0.1); }
-  playPass() { this.playTone(200, 'sawtooth', 0.15, 0.05); }
+  
+  playPass() { 
+    if (this.muted) return;
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+        window.speechSynthesis.cancel(); // Stop previous speech
+        const phrases = ["不要", "过", "要不起"];
+        const text = phrases[Math.floor(Math.random() * phrases.length)];
+        const ut = new SpeechSynthesisUtterance(text);
+        ut.lang = 'zh-CN';
+        ut.rate = 1.3;
+        
+        // Try to find a Chinese voice
+        const zhVoice = this.voices.find(v => v.lang.includes('zh-CN')) || this.voices.find(v => v.lang.includes('zh'));
+        if (zhVoice) ut.voice = zhVoice;
+
+        window.speechSynthesis.speak(ut);
+    } else {
+        this.playTone(200, 'sawtooth', 0.15, 0.05); 
+    }
+  }
+
   playBomb() { 
     if (this.muted || !this.ctx) return;
     const osc = this.ctx.createOscillator();
@@ -665,9 +692,6 @@ export default function GanDengYan() {
   const [loadingPlayerCount, setLoadingPlayerCount] = useState<number | null>(null);
   const [isAutoJoining, setIsAutoJoining] = useState(false);
   
-  // NEW: Auto-Pass Toggle State
-  const [autoPass, setAutoPass] = useState(false);
-  
   // Network State
   const [peer, setPeer] = useState<Peer | null>(null);
   const [myPeerId, setMyPeerId] = useState<string>("");
@@ -746,7 +770,6 @@ export default function GanDengYan() {
       setBombToast(null);
       setSelectedCardIds([]);
       setShowReport(false);
-      setAutoPass(false); // Reset auto-pass state
       setLoadingPlayerCount(null);
       setIsAutoJoining(false);
   };
@@ -1437,15 +1460,14 @@ export default function GanDengYan() {
           if (bestMove) {
               setSelectedCardIds(bestMove.cards.map(c => c.id));
           } else {
-              if (autoPass) {
-                  showMessage("无牌可出，自动过...", 1000);
-                  autoPassTimeoutRef.current = window.setTimeout(() => {
-                      handleUserPass();
-                  }, 1000);
-              }
+              // ALWAYS AUTO PASS IF NO MOVE IS AVAILABLE
+              showMessage("无牌可出，自动过...", 1000);
+              autoPassTimeoutRef.current = window.setTimeout(() => {
+                  handleUserPass();
+              }, 1000);
           }
       }
-  }, [state.currentPlayerIndex, state.status, state.myPlayerId, state.tablePile, autoPass]);
+  }, [state.currentPlayerIndex, state.status, state.myPlayerId, state.tablePile]);
 
 
   useEffect(() => {
@@ -1921,26 +1943,6 @@ export default function GanDengYan() {
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", position: "relative", overflow: "hidden" }}>
       
-      <div style={{ position: "absolute", top: "10px", left: "10px", zIndex: 50 }}>
-          <button onClick={() => setAutoPass(!autoPass)} style={{ 
-              background: autoPass ? "rgba(76, 175, 80, 0.8)" : "rgba(0,0,0,0.4)", 
-              color: "white", 
-              border: "1px solid white", 
-              borderRadius: "20px", 
-              padding: "5px 12px", 
-              cursor: "pointer", 
-              height: "40px", 
-              fontWeight: "bold",
-              fontSize: "0.9rem", 
-              display: "flex",
-              alignItems: "center",
-              gap: "5px",
-              transition: "background 0.3s"
-          }}>
-              {autoPass ? "⚡ 自动过牌: ON" : "⚡ 自动过牌: OFF"}
-          </button>
-      </div>
-
       <div style={{ position: "absolute", top: "10px", right: "10px", zIndex: 50, display: "flex", gap: "10px" }}>
         <button onClick={toggleMute} style={{ background: "rgba(0,0,0,0.4)", color: "white", border: "2px solid white", borderRadius: "50%", width: "40px", height: "40px", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: "16px" }}>{muted ? "🔇" : "🔊"}</button>
         <button onClick={exitToLobby} style={{ background: "rgba(0,0,0,0.4)", color: "white", border: "1px solid white", borderRadius: "20px", padding: "5px 15px", cursor: "pointer", height: "40px", fontWeight: "bold" }}>退出</button>
