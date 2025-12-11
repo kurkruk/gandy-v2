@@ -663,6 +663,7 @@ export default function GanDengYan() {
   const [muted, setMuted] = useState(false);
   const [showReport, setShowReport] = useState(false);
   const [loadingPlayerCount, setLoadingPlayerCount] = useState<number | null>(null);
+  const [isAutoJoining, setIsAutoJoining] = useState(false);
   
   // NEW: Auto-Pass Toggle State
   const [autoPass, setAutoPass] = useState(false);
@@ -690,6 +691,19 @@ export default function GanDengYan() {
     connectionsRef.current = connections;
   }, [connections]);
   
+  // Check for Auto-Join Link
+  useEffect(() => {
+      const params = new URLSearchParams(window.location.search);
+      const roomParam = params.get("room");
+      if (roomParam && roomParam.length === 4) {
+          setJoinRoomId(roomParam);
+          setIsAutoJoining(true);
+          setLobbyStep("NICKNAME");
+          // Clean URL
+          window.history.replaceState({}, document.title, window.location.pathname);
+      }
+  }, []);
+
   const addLog = (msg: string) => {
       const time = new Date().toLocaleTimeString();
       setNetLogs(prev => [`[${time}] ${msg}`, ...prev].slice(0, 10)); // Keep last 10 logs
@@ -734,6 +748,7 @@ export default function GanDengYan() {
       setShowReport(false);
       setAutoPass(false); // Reset auto-pass state
       setLoadingPlayerCount(null);
+      setIsAutoJoining(false);
   };
 
   const showMessage = useCallback((msg: string, duration: number = 0) => {
@@ -1051,7 +1066,7 @@ export default function GanDengYan() {
               
               conn.on('close', () => {
                   clearTimeout(timeoutId);
-                  addLog("连接已断开");
+                  addLog("连接已断断");
                   showMessage("连接断开", 3000);
                   setState(prev => ({...prev, status: 'lobby'}));
               });
@@ -1078,6 +1093,15 @@ export default function GanDengYan() {
           
           setPeer(guestPeer);
       }, 500);
+  };
+  
+  const copyInviteLink = () => {
+      const url = `${window.location.protocol}//${window.location.host}${window.location.pathname}?room=${hostRoomId}`;
+      navigator.clipboard.writeText(url).then(() => {
+          showMessage("邀请链接已复制！", 2000);
+      }).catch(err => {
+          showMessage("复制失败", 2000);
+      });
   };
 
   // --- GAME LOGIC ---
@@ -1107,7 +1131,7 @@ export default function GanDengYan() {
         }));
         
         audio.playDeal();
-        const msg = `游戏开始！${players[dealerIdx].name} 先出。`;
+        const msg = `${players[dealerIdx].name} 成为首局随机庄家`;
         showMessage(msg, 3000);
         broadcastMessage(msg);
         setSelectedCardIds([]);
@@ -1164,9 +1188,6 @@ export default function GanDengYan() {
 
     if (state.status === 'lobby' || state.status === 'waiting' || state.lastWinnerIndex === -1) {
         const dealerIdx = Math.floor(Math.random() * players.length);
-        const msg = `${players[dealerIdx].name} 成为首局随机庄家`;
-        showMessage(msg, 2000);
-        broadcastMessage(msg, 2000);
         dealAndPlay(players, newDeck, dealerIdx, scoresToKeep, historyToKeep);
         return;
     }
@@ -1587,7 +1608,16 @@ export default function GanDengYan() {
                 <div style={{ background: "transparent", padding: "10px", border: "3px dashed #fbc02d", borderRadius: "10px" }}>
                     <h1 style={{ margin: 0, fontSize: "6rem", color: "#fbc02d", letterSpacing: "5px", lineHeight: 1 }}>{hostRoomId}</h1>
                 </div>
-                <div style={{ color: "#ddd" }}>已加入玩家 ({state.players.length}人):</div>
+                {state.isHost && (
+                    <button 
+                        onClick={copyInviteLink} 
+                        style={{ padding: "8px 15px", background: "#0288d1", border: "none", borderRadius: "5px", fontSize: "0.9rem", color: "white", cursor: "pointer", marginTop: "-5px" }}
+                    >
+                        🔗 复制邀请链接
+                    </button>
+                )}
+
+                <div style={{ color: "#ddd", marginTop: "10px" }}>已加入玩家 ({state.players.length}人):</div>
                 
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "10px", width: "100%", maxHeight: "200px", overflowY: "auto" }}>
                     {state.players.map(p => (
@@ -1677,10 +1707,17 @@ export default function GanDengYan() {
                     style={{ padding: "10px", fontSize: "1.5rem", width: "200px", textAlign: "center", borderRadius: "5px", border: "none" }}
                   />
                   <button 
-                    onClick={() => { if(nickname.trim()) setLobbyStep("MULTI_LOBBY"); else showMessage("请输入昵称", 1000); }} 
+                    onClick={() => { 
+                        if(!nickname.trim()) { showMessage("请输入昵称", 1000); return; }
+                        if (isAutoJoining) {
+                            joinRoom();
+                        } else {
+                            setLobbyStep("MULTI_LOBBY"); 
+                        }
+                    }} 
                     style={{ padding: "10px 30px", background: "#fbc02d", border: "none", borderRadius: "20px", fontSize: "1.2rem", fontWeight: "bold" }}
                   >
-                    下一步
+                    {isAutoJoining ? "加入房间" : "下一步"}
                   </button>
                   <button onClick={() => setLobbyStep("MAIN")} style={{ background: "transparent", border: "none", color: "#ccc", textDecoration: "underline" }}>返回</button>
               </div>
