@@ -145,57 +145,60 @@ class SoundManager {
   playDeal() { this.playTone(600, 'triangle', 0.05, 0.05); }
   playCard() { this.playTone(400, 'sine', 0.1, 0.1); }
   
+  // Selected Fallback: Wooden Knock (Classic)
+  playPassSound() {
+    if (this.muted || !this.ctx) return;
+    try {
+        const t = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sine';
+        // Pitch drop simulates the resonance of wood
+        osc.frequency.setValueAtTime(800, t);
+        osc.frequency.exponentialRampToValueAtTime(100, t + 0.1);
+        
+        // Very short, sharp envelope
+        gain.gain.setValueAtTime(0.8, t);
+        gain.gain.exponentialRampToValueAtTime(0.01, t + 0.1);
+        
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start();
+        osc.stop(t + 0.1);
+    } catch (e) {}
+  }
+
   playPass() { 
     if (this.muted) return;
 
     // Try Web Speech API first
     if (typeof window !== 'undefined' && window.speechSynthesis) {
-        // Mobile Chrome often empties the voices array, reload it just in case
         if (this.voices.length === 0) {
             this.voices = window.speechSynthesis.getVoices();
         }
 
-        window.speechSynthesis.cancel(); // Stop previous speech
+        window.speechSynthesis.cancel(); 
 
         const phrases = ["不要", "过", "要不起"];
         const text = phrases[Math.floor(Math.random() * phrases.length)];
         const ut = new SpeechSynthesisUtterance(text);
         
-        // CRITICAL: Always set lang, even if voice isn't found. 
-        // Mobile OS often handles 'zh-CN' correctly with the default engine even if getVoices() is empty.
         ut.lang = 'zh-CN'; 
         ut.rate = 1.3;
         
-        // Try to find a specific Chinese voice if available
         const zhVoice = this.voices.find(v => v.lang.includes('zh') || v.lang.includes('CN'));
         if (zhVoice) ut.voice = zhVoice;
 
-        // Wrap in try-catch as some strict browsers throw errors on speak() without user gesture (though rare if init called)
         try {
             window.speechSynthesis.speak(ut);
-            return; // Success, skip fallback
+            return; // Success
         } catch (e) {
-            console.warn("TTS Failed", e);
-            // Fall through to tone
+            console.warn("TTS Failed, using fallback", e);
         }
     } 
 
-    // FALLBACK: Softer "Bloop" sound (Sine wave pitch drop) instead of the harsh sawtooth
-    if (this.ctx) {
-        try {
-            const osc = this.ctx.createOscillator();
-            const gain = this.ctx.createGain();
-            osc.type = 'sine'; // Sine is softer than sawtooth
-            osc.frequency.setValueAtTime(300, this.ctx.currentTime);
-            osc.frequency.exponentialRampToValueAtTime(100, this.ctx.currentTime + 0.15); // Quick drop
-            gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
-            gain.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 0.15);
-            osc.connect(gain);
-            gain.connect(this.ctx.destination);
-            osc.start();
-            osc.stop(this.ctx.currentTime + 0.2);
-        } catch(e) { console.error(e); }
-    }
+    // FALLBACK: Use selected "Knock" sound
+    this.playPassSound();
   }
 
   playBomb() { 
