@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback, memo } from "react";
 import { createRoot } from "react-dom/client";
 import Peer, { DataConnection } from "peerjs";
@@ -99,7 +98,6 @@ class SoundManager {
   ctx: AudioContext | null = null;
   muted: boolean = false;
   voices: SpeechSynthesisVoice[] = [];
-  voicesLoaded: boolean = false;
 
   init() {
     if (!this.ctx) {
@@ -108,18 +106,11 @@ class SoundManager {
     if (this.ctx.state === 'suspended') {
       this.ctx.resume();
     }
-    // Mobile Browser Fix: aggressively try to load voices
+    // Load voices
     if (typeof window !== 'undefined' && window.speechSynthesis) {
-        const load = () => { 
-            this.voices = window.speechSynthesis.getVoices(); 
-            this.voicesLoaded = this.voices.length > 0;
-        };
+        const load = () => { this.voices = window.speechSynthesis.getVoices(); };
         load();
         window.speechSynthesis.onvoiceschanged = load;
-        // Some browsers need a "kick"
-        if (!this.voicesLoaded) {
-           setTimeout(load, 500);
-        }
     }
   }
 
@@ -145,60 +136,24 @@ class SoundManager {
   playDeal() { this.playTone(600, 'triangle', 0.05, 0.05); }
   playCard() { this.playTone(400, 'sine', 0.1, 0.1); }
   
-  // Selected Fallback: Wooden Knock (Classic)
-  playPassSound() {
-    if (this.muted || !this.ctx) return;
-    try {
-        const t = this.ctx.currentTime;
-        const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
-        osc.type = 'sine';
-        // Pitch drop simulates the resonance of wood
-        osc.frequency.setValueAtTime(800, t);
-        osc.frequency.exponentialRampToValueAtTime(100, t + 0.1);
-        
-        // Very short, sharp envelope
-        gain.gain.setValueAtTime(0.8, t);
-        gain.gain.exponentialRampToValueAtTime(0.01, t + 0.1);
-        
-        osc.connect(gain);
-        gain.connect(this.ctx.destination);
-        osc.start();
-        osc.stop(t + 0.1);
-    } catch (e) {}
-  }
-
   playPass() { 
     if (this.muted) return;
-
-    // Try Web Speech API first
     if (typeof window !== 'undefined' && window.speechSynthesis) {
-        if (this.voices.length === 0) {
-            this.voices = window.speechSynthesis.getVoices();
-        }
-
-        window.speechSynthesis.cancel(); 
-
+        window.speechSynthesis.cancel(); // Stop previous speech
         const phrases = ["不要", "过", "要不起"];
         const text = phrases[Math.floor(Math.random() * phrases.length)];
         const ut = new SpeechSynthesisUtterance(text);
-        
-        ut.lang = 'zh-CN'; 
+        ut.lang = 'zh-CN';
         ut.rate = 1.3;
         
-        const zhVoice = this.voices.find(v => v.lang.includes('zh') || v.lang.includes('CN'));
+        // Try to find a Chinese voice
+        const zhVoice = this.voices.find(v => v.lang.includes('zh-CN')) || this.voices.find(v => v.lang.includes('zh'));
         if (zhVoice) ut.voice = zhVoice;
 
-        try {
-            window.speechSynthesis.speak(ut);
-            return; // Success
-        } catch (e) {
-            console.warn("TTS Failed, using fallback", e);
-        }
-    } 
-
-    // FALLBACK: Use selected "Knock" sound
-    this.playPassSound();
+        window.speechSynthesis.speak(ut);
+    } else {
+        this.playTone(200, 'sawtooth', 0.15, 0.05); 
+    }
   }
 
   playBomb() { 
@@ -1198,7 +1153,10 @@ export default function GanDengYan() {
         }));
         
         audio.playDeal();
-        const msg = `${players[dealerIdx].name} 成为首局随机庄家`;
+        // FIX: Conditional Message based on history
+        const msg = initialHistory.length === 0 
+           ? `${players[dealerIdx].name} 成为首局随机庄家`
+           : `${players[dealerIdx].name} 赢得上局，优先出牌`;
         showMessage(msg, 3000);
         broadcastMessage(msg);
         setSelectedCardIds([]);
@@ -1343,7 +1301,10 @@ export default function GanDengYan() {
         let roundWinner = currentState.lastWinnerIndex;
         let nextRoundsFinishedAfterDeckEmpty = currentState.roundsFinishedAfterDeckEmpty;
 
-        nextPlayers[currentState.currentPlayerIndex].lastAction = passed ? "PASS" : "PLAY";
+        // FIX: Don't show 'PASS' bubble if the round is about to clear
+        if (nextPasses < currentState.players.length - 1) {
+             nextPlayers[currentState.currentPlayerIndex].lastAction = passed ? "PASS" : "PLAY";
+        }
 
         if (nextPasses >= currentState.players.length - 1) {
             const lastPlay = currentState.tablePile[currentState.tablePile.length - 1];
@@ -1396,7 +1357,9 @@ export default function GanDengYan() {
     setGameState(prev => {
         const playerIndex = prev.currentPlayerIndex;
         const newPlayers = [...prev.players];
-        const player = newPlayers[playerIndex];
+        // Shallow copy player object to avoid mutation
+        const player = { ...newPlayers[playerIndex] };
+        newPlayers[playerIndex] = player;
         
         const cardIds = new Set(cards.map(c => c.id));
         player.hand = player.hand.filter(c => !cardIds.has(c.id));
@@ -1527,7 +1490,11 @@ export default function GanDengYan() {
         if (result) {
             playHand(result.cards, result.analysis);
         } else {
-            audio.playPass();
+            // FIX: Don't play Pass sound if this pass clears the table (Round Over)
+            const willClearRound = state.passesInARow + 1 >= state.players.length - 1;
+            if (!willClearRound) {
+                audio.playPass();
+            }
             nextTurn(true);
         }
       }, 1000 + Math.random() * 500);
@@ -1536,7 +1503,7 @@ export default function GanDengYan() {
     return () => {
       if (aiTimeoutRef.current) clearTimeout(aiTimeoutRef.current);
     };
-  }, [state.currentPlayerIndex, state.status, state.players, state.tablePile, nextTurn, playHand, state.isHost]); 
+  }, [state.currentPlayerIndex, state.status, state.players, state.tablePile, nextTurn, playHand, state.isHost, state.passesInARow]); 
 
   const handleUserPlay = () => {
     const me = state.players[state.myPlayerId || 0];
@@ -1560,8 +1527,13 @@ export default function GanDengYan() {
   };
 
   const handleUserPass = () => {
-    audio.playPass();
     if (state.tablePile.length === 0) { showMessage("你必须出牌，不能过！", 1500); return; }
+    
+    // FIX: Don't play Pass sound if this pass clears the table (Round Over)
+    const willClearRound = state.passesInARow + 1 >= state.players.length - 1;
+    if (!willClearRound) {
+        audio.playPass();
+    }
     
     if (state.isHost) {
         nextTurn(true);
@@ -1886,6 +1858,95 @@ export default function GanDengYan() {
            </div>
         </div>
       );
+  }
+
+  if (state.status === "scoring") {
+     return (
+        <div className="full-screen-overlay">
+           <div style={{ 
+               background: "#2c3e50", 
+               borderRadius: "16px", 
+               boxShadow: "0 10px 30px rgba(0,0,0,0.5)", 
+               width: "90%", maxWidth: "500px", overflow: "hidden",
+               border: "2px solid #f1c40f", display: "flex", flexDirection: "column", position: "relative"
+           }}>
+             <button
+               onClick={exitToLobby}
+               style={{
+                 position: "absolute", top: "15px", right: "15px",
+                 background: "rgba(0,0,0,0.2)", border: "none", color: "white",
+                 width: "36px", height: "36px", borderRadius: "50%",
+                 cursor: "pointer", fontSize: "20px", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10
+               }}
+             >✕</button>
+
+             <div style={{ background: "#a06000", padding: "20px", textAlign: "center", color: "white", borderBottom: "1px solid #c98e1a" }}>
+                 <h2 style={{ margin: 0, fontSize: "2rem", fontWeight: "900" }}>本局分数结算</h2>
+             </div>
+             
+             <div style={{ padding: "20px", background: "#2c3e50", flex: 1 }}>
+               <div style={{ display: "grid", gridTemplateColumns: "1fr 2.5fr 50px 50px", gap: "10px", color: "#95a5a6", fontSize: "1rem", marginBottom: "15px", paddingBottom: "10px", borderBottom: "1px solid #34495e", fontWeight: "bold" }}>
+                  <div style={{ textAlign: "left" }}>玩家</div>
+                  <div style={{ textAlign: "right" }}>详情</div>
+                  <div style={{ textAlign: "right" }}>变动</div>
+                  <div style={{ textAlign: "right" }}>总分</div>
+               </div>
+               
+               <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                 {state.players.map(p => {
+                    const totalScore = state.scores[p.id] || 0;
+                    const multiplier = Math.pow(2, state.bombCount);
+                    let roundScore = 0;
+                    const isWinner = p.id === state.lastWinnerIndex;
+                    let detailText = "";
+
+                    const lastHistory = state.gameHistory[state.gameHistory.length - 1] || {};
+                    roundScore = lastHistory[p.id] || 0;
+
+                    if (isWinner) {
+                       detailText = "赢家通吃";
+                    } else {
+                       let base = p.cardsLeft;
+                       let baseText = `剩${base}张`;
+                       if (base === 1) { base = 0; baseText = `剩1张(免输)`; }
+                       if (p.cardsLeft === 5 && !p.hasPlayed) { base = p.cardsLeft * 2; baseText = `全关x2`; }
+                       detailText = baseText;
+                       if (multiplier > 1 && p.cardsLeft !== 1) detailText += ` x${multiplier}倍`;
+                    }
+
+                    return (
+                       <div key={p.id} style={{ display: "grid", gridTemplateColumns: "1fr 2.5fr 50px 50px", gap: "10px", alignItems: "center", background: isWinner ? "rgba(255, 193, 7, 0.2)" : "transparent", padding: "10px 10px", borderRadius: "8px", borderBottom: "1px solid #34495e" }}>
+                         <div style={{ display: "flex", alignItems: "center", gap: "8px", textAlign: "left" }}>
+                            <span style={{ fontWeight: "bold", color: "white", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</span>
+                            {isWinner && <span style={{ fontSize: "1.2rem" }}>🏆</span>}
+                         </div>
+                         <div style={{ textAlign: "right", fontSize: "0.9rem", color: "#bdc3c7", whiteSpace: "nowrap" }}>{detailText}</div>
+                         <div style={{ textAlign: "right", fontWeight: "bold", color: roundScore > 0 ? "#27ae60" : (roundScore < 0 ? "#e74c3c" : "#95a5a6"), fontSize: "1.1rem" }}>{roundScore > 0 ? "+" : ""}{roundScore}</div>
+                         <div style={{ textAlign: "right", color: "white", fontSize: "1.1rem" }}>{totalScore}</div>
+                       </div>
+                    );
+                 })}
+               </div>
+             </div>
+             
+             <div style={{ padding: "20px", textAlign: "center", background: "#2c3e50", display: "flex", flexDirection: "column", gap: "10px" }}>
+                 <button 
+                   onClick={() => state.isHost && startGame(state.players.length)}
+                   disabled={!state.isHost}
+                   style={{ padding: "15px 80px", fontSize: "1.3rem", cursor: state.isHost ? "pointer" : "not-allowed", background: state.isHost ? "#d4a017" : "#7f8c8d", border: "none", borderRadius: "10px", fontWeight: "bold", color: "white", boxShadow: "0 4px 0 rgba(0,0,0,0.2)" }}
+                 >
+                   {state.isHost ? "下一局" : "等待房主..."}
+                 </button>
+                 <button 
+                   onClick={() => setShowReport(true)}
+                   style={{ background: "transparent", border: "1px solid #7f8c8d", color: "#bdc3c7", padding: "10px", borderRadius: "8px", cursor: "pointer" }}
+                 >
+                   📊 查看战绩
+                 </button>
+             </div>
+           </div>
+        </div>
+     );
   }
 
   const opponents = state.players.filter(p => p.id !== myId);
