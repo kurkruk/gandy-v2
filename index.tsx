@@ -1875,8 +1875,9 @@ export default function GanDengYan() {
 
   const opponents = state.players.filter(p => p.id !== myId);
   const cardCount = user.hand.length;
-  const squeeze = cardCount <= 5 ? -40 : -40 - ((cardCount - 5) * 4);
-  const cardOverlap = Math.max(-70, squeeze);
+  // Increase squeeze factor and base offset for tighter hand
+  const squeeze = cardCount <= 5 ? -50 : -50 - ((cardCount - 5) * 5);
+  const cardOverlap = Math.max(-80, squeeze);
   const isMyTurn = state.currentPlayerIndex === myId;
 
   return (
@@ -1911,12 +1912,12 @@ export default function GanDengYan() {
       </div>
 
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
-        <div style={{ display: "flex", marginLeft: "-36px", transform: "scale(1.2) translateY(73px)" }}>
+        <div style={{ display: "flex", marginLeft: "-48px", transform: "scale(1.2) translateY(73px)" }}>
           {state.tablePile.length === 0 ? (
-             <div style={{ marginLeft: "36px", opacity: 0.3, border: "2px dashed #fff", width: "60px", height: "84px", borderRadius: "6px", display: "flex", alignItems: "center", justifyContent: "center" }}>空</div>
+             <div style={{ marginLeft: "48px", opacity: 0.3, border: "2px dashed #fff", width: "60px", height: "84px", borderRadius: "6px", display: "flex", alignItems: "center", justifyContent: "center" }}>空</div>
           ) : (
              state.tablePile[state.tablePile.length - 1].cards.map((c, i) => (
-               <div key={c.id} className={getAnimClass(state.tablePile[state.tablePile.length - 1].playerId)} style={{ marginLeft: i === 0 ? "36px" : "-36px", zIndex: i }}>
+               <div key={c.id} className={getAnimClass(state.tablePile[state.tablePile.length - 1].playerId)} style={{ marginLeft: i === 0 ? "48px" : "-48px", zIndex: i }}>
                   <CardView 
                      card={c} 
                      small 
@@ -1988,9 +1989,9 @@ export default function GanDengYan() {
          </div>
 
          <div style={{ display: "flex", justifyContent: "center", height: "130px", overflow: "visible" }}>
-            <div style={{ display: "flex", marginLeft: "-40px" }}>
+            <div style={{ display: "flex", marginLeft: "-50px" }}>
               {user.hand.map((card, i) => (
-                <div key={card.id} style={{ marginLeft: i === 0 ? "40px" : `${cardOverlap}px`, zIndex: i }}>
+                <div key={card.id} style={{ marginLeft: i === 0 ? "50px" : `${cardOverlap}px`, zIndex: i }}>
                    <CardView 
                      card={card} 
                      selected={selectedCardIds.includes(card.id)} 
