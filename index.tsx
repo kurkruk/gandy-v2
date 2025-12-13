@@ -25,6 +25,7 @@ interface Player {
   role: "host" | "guest" | "bot";
   color: string;
   peerId?: string; // For network identification
+  online?: boolean; // Track connection status
 }
 
 type HandType = "SINGLE" | "PAIR" | "STRAIGHT" | "BOMB" | "KING_BOMB" | "INVALID";
@@ -874,8 +875,9 @@ export default function GanDengYan() {
              const existingPlayer = prev.players.find(p => p.name === data.name);
              if (existingPlayer) {
                  addLog(`玩家 ${data.name} 重连成功`);
+                 // Mark as online on reconnect
                  const updatedPlayers = prev.players.map(p => 
-                     p.name === data.name ? { ...p, peerId: data.peerId } : p
+                     p.name === data.name ? { ...p, peerId: data.peerId, online: true } : p
                  );
                  const nextState = { ...prev, players: updatedPlayers };
                  if (conn.open) conn.send({ type: "SYNC_STATE", state: nextState });
@@ -894,7 +896,8 @@ export default function GanDengYan() {
                  lastAction: null,
                  role: 'guest',
                  color: BOT_COLORS[(newPId - 1) % BOT_COLORS.length],
-                 peerId: data.peerId
+                 peerId: data.peerId,
+                 online: true // Default online
              };
              const nextState = { ...prev, players: [...prev.players, newPlayer] };
              if (conn.open) conn.send({ type: "SYNC_STATE", state: nextState });
@@ -972,7 +975,8 @@ export default function GanDengYan() {
                       lastAction: null,
                       role: 'host',
                       color: 'transparent',
-                      peerId: id
+                      peerId: id,
+                      online: true
                   }],
                   scores: {},
                   gameHistory: [],
@@ -1002,6 +1006,7 @@ export default function GanDengYan() {
                   setConnections(prev => prev.filter(c => c.peer !== conn.peer));
                   
                   setGameState(prev => {
+                      // If in waiting room, remove player completely
                       if (prev.status === 'waiting') {
                           const pName = prev.players.find(p => p.peerId === conn.peer)?.name || "玩家";
                           showMessage(`${pName} 已退出`, 2000);
@@ -1009,8 +1014,20 @@ export default function GanDengYan() {
                           // Re-index
                           const reIndexed = remaining.map((p, idx) => ({ ...p, id: idx }));
                           return { ...prev, players: reIndexed };
+                      } 
+                      // If in game, mark as offline but keep in seat
+                      else {
+                          const target = prev.players.find(p => p.peerId === conn.peer);
+                          if (target) {
+                              showMessage(`⚠️ ${target.name} 已断线！`, 5000);
+                              broadcastMessage(`⚠️ ${target.name} 已断线！`, 5000);
+                              const updatedPlayers = prev.players.map(p => 
+                                  p.peerId === conn.peer ? { ...p, online: false } : p
+                              );
+                              return { ...prev, players: updatedPlayers };
+                          }
+                          return prev;
                       }
-                      return prev;
                   });
               });
 
@@ -1138,6 +1155,7 @@ export default function GanDengYan() {
           const cardsToTake = idx === dealerIdx ? 6 : 5;
           p.hand = sortCards(deck.splice(0, cardsToTake));
           p.cardsLeft = p.hand.length;
+          p.online = true; // Ensure marked online at start
         });
 
         setGameState((prev) => ({
@@ -1184,7 +1202,8 @@ export default function GanDengYan() {
             hand: [],
             cardsLeft: 0,
             hasPlayed: false,
-            lastAction: null
+            lastAction: null,
+            online: p.online !== false // Keep existing status or default true
         }));
         
         if (state.status === "scoring" || state.status === "celebrating" || state.status === "playing") {
@@ -1210,7 +1229,8 @@ export default function GanDengYan() {
             hasPlayed: false,
             lastAction: null,
             role: "guest",
-            color: isHuman ? "transparent" : BOT_COLORS[(i - 1) % BOT_COLORS.length]
+            color: isHuman ? "transparent" : BOT_COLORS[(i - 1) % BOT_COLORS.length],
+            online: true
           });
         }
     }
@@ -2016,12 +2036,17 @@ export default function GanDengYan() {
           const posClass = getOpponentPositionStyle(opp.id, state.players.length);
           const avatar = BOT_AVATARS[(opp.id - 1) % BOT_AVATARS.length] || "👤";
           const isOppDealer = state.dealerId === opp.id;
+          const isOffline = opp.online === false;
+
           return (
-            <div key={opp.id} className={`opponent-container ${posClass}`} style={{ opacity: state.currentPlayerIndex === opp.id ? 1 : 0.7, transform: state.currentPlayerIndex === opp.id ? "scale(1.15)" : "scale(1)", zIndex: 10 }}>
+            <div key={opp.id} className={`opponent-container ${posClass}`} style={{ opacity: isOffline ? 0.5 : (state.currentPlayerIndex === opp.id ? 1 : 0.7), transform: state.currentPlayerIndex === opp.id ? "scale(1.15)" : "scale(1)", zIndex: 10 }}>
               <div style={{ position: "relative" }}>
-                 <div style={{ width: "50px", height: "50px", borderRadius: "50%", background: opp.color, display: "flex", alignItems: "center", justifyContent: "center", border: state.currentPlayerIndex === opp.id ? "3px solid #fbc02d" : "2px solid #fff", color: "white", fontSize: "28px", boxShadow: "0 2px 4px rgba(0,0,0,0.3)" }}>{avatar}</div>
+                 <div style={{ width: "50px", height: "50px", borderRadius: "50%", background: isOffline ? "#555" : opp.color, display: "flex", alignItems: "center", justifyContent: "center", border: state.currentPlayerIndex === opp.id ? "3px solid #fbc02d" : "2px solid #fff", color: "white", fontSize: "28px", boxShadow: "0 2px 4px rgba(0,0,0,0.3)" }}>
+                    {isOffline ? "🚫" : avatar}
+                 </div>
                  {isOppDealer && <div className="dealer-badge">庄</div>}
                  {opp.lastAction === "PASS" && <div className="pass-bubble">不要</div>}
+                 {isOffline && <div style={{ position: "absolute", top: "-15px", left: "50%", transform: "translateX(-50%)", background: "#c0392b", color: "white", fontSize: "10px", padding: "2px 5px", borderRadius: "4px", whiteSpace: "nowrap", border: "1px solid white" }}>离线</div>}
               </div>
               <div style={{ background: "#fff", color: "#d32f2f", padding: "2px 8px", borderRadius: "10px", marginTop: "-10px", fontWeight: "bold", fontSize: "1.2rem", zIndex: 2, position: "relative", boxShadow: "0 1px 2px black" }}>{opp.cardsLeft}</div>
               <div style={{ fontSize: "0.8rem", marginTop: "4px", textShadow: "1px 1px 2px black", background: "rgba(0,0,0,0.5)", padding: "2px 4px", borderRadius: "4px" }}>{opp.name}</div>
