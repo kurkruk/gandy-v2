@@ -1912,12 +1912,12 @@ export default function GanDengYan() {
       </div>
 
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
-        <div style={{ display: "flex", marginLeft: "-48px", transform: "scale(1.2) translateY(73px)" }}>
+        <div style={{ display: "flex", marginLeft: "-44px", transform: "scale(1.2) translateY(73px)" }}>
           {state.tablePile.length === 0 ? (
-             <div style={{ marginLeft: "48px", opacity: 0.3, border: "2px dashed #fff", width: "60px", height: "84px", borderRadius: "6px", display: "flex", alignItems: "center", justifyContent: "center" }}>空</div>
+             <div style={{ marginLeft: "44px", opacity: 0.3, border: "2px dashed #fff", width: "75px", height: "105px", borderRadius: "6px", display: "flex", alignItems: "center", justifyContent: "center" }}>空</div>
           ) : (
              state.tablePile[state.tablePile.length - 1].cards.map((c, i) => (
-               <div key={c.id} className={getAnimClass(state.tablePile[state.tablePile.length - 1].playerId)} style={{ marginLeft: i === 0 ? "48px" : "-48px", zIndex: i }}>
+               <div key={c.id} className={getAnimClass(state.tablePile[state.tablePile.length - 1].playerId)} style={{ marginLeft: i === 0 ? "44px" : "-44px", zIndex: i }}>
                   <CardView 
                      card={c} 
                      small 
