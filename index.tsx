@@ -72,7 +72,7 @@ const BOT_COLORS = ["#ef5350", "#ab47bc", "#5c6bc0", "#26c6da", "#66bb6a", "#ffa
 const BOT_AVATARS = ["🐼", "🐨", "🦊", "🐶", "🐱", "🐰", "🐹", "🐯"];
 const APP_ID_PREFIX = "gdy-game-v1-"; // Unique prefix to avoid collision on public PeerServer
 
-// NEW: Tencent & Xiaomi STUN servers + Metered.ca TURN for global connectivity
+// Tencent & Xiaomi STUN servers + Metered.ca TURN for global connectivity
 const PEER_CONFIG = {
   iceServers: [
     { urls: 'stun:stun.qq.com:3478' },     // Tencent
@@ -81,13 +81,6 @@ const PEER_CONFIG = {
     { urls: 'stun:stun.baidu.com:3478' },   // Baidu
     { urls: 'stun:stun.hitv.com' },
     { urls: 'stun:stun.l.google.com:19302' }, // Fallback
-    
-    // 👇 Metered.ca TURN Configuration 👇
-    {
-      urls: "turn:global.turn.metered.ca:80",
-      username: "REPLACE_WITH_YOUR_USERNAME",
-      credential: "REPLACE_WITH_YOUR_PASSWORD"
-    }
   ],
   sdpSemantics: 'unified-plan'
 };
@@ -218,7 +211,6 @@ const sortCards = (cards: Card[]) => {
   return [...cards].sort((a, b) => a.rank - b.rank);
 };
 
-// IMPROVED: analyzeHand now accepts a hint for ambiguity resolution
 const analyzeHand = (cards: Card[], targetRankHint?: number): { type: HandType; primaryRank: number; length: number; bombLevel: number } | null => {
   if (cards.length === 0) return null;
   const sorted = sortCards(cards);
@@ -257,7 +249,6 @@ const analyzeHand = (cards: Card[], targetRankHint?: number): { type: HandType; 
     if (len >= 3) validSeqs.push([15, ...Array.from({length: len-1}, (_, i) => 3+i)]); 
     
     for (let start = 3; start <= 14 - len + 1; start++) {
-      // FIX: Ensure Max rank is 14 (A) for normal straights, banning 13-14-15 (K-A-2)
       if (start + len - 1 > 14) continue; 
       validSeqs.push(Array.from({length: len}, (_, i) => start + i));
     }
@@ -279,14 +270,10 @@ const analyzeHand = (cards: Card[], targetRankHint?: number): { type: HandType; 
     }
 
     if (possibleInterpretations.length > 0) {
-        // If we have a hint (e.g., must beat rank 3, so we look for rank 4), try to find it
         if (targetRankHint !== undefined) {
             const match = possibleInterpretations.find(p => p.primaryRank === targetRankHint);
             if (match) return { type: "STRAIGHT", primaryRank: match.primaryRank, length: len, bombLevel: 0 };
         }
-        
-        // Default: Return the LARGEST rank (Aggressive play)
-        // Sort descending by primaryRank
         possibleInterpretations.sort((a, b) => b.primaryRank - a.primaryRank);
         return { type: "STRAIGHT", primaryRank: possibleInterpretations[0].primaryRank, length: len, bombLevel: 0 };
     }
@@ -326,14 +313,11 @@ const canBeat = (move: NonNullable<ReturnType<typeof analyzeHand>>, last: Played
 };
 
 // AI STRATEGY (Pure Functions)
-
 const calculateAiMove = (hand: Card[], lastHand: PlayedHand | null): { cards: Card[], analysis: any } | null => {
     const normals = hand.filter(c => c.suit !== "joker");
     const jokers = hand.filter(c => c.suit === "joker");
-    const lowNormals = normals.filter(c => c.rank < 15); // Exclude 2 and Jokers for prioritized playing
+    const lowNormals = normals.filter(c => c.rank < 15);
     const hasJoker = jokers.length > 0;
-
-    // --- Helpers ---
 
     const findSingle = (targetRank: number | null, limitToLow: boolean = false): Card[] | null => {
         const pool = limitToLow ? lowNormals : normals;
@@ -342,11 +326,10 @@ const calculateAiMove = (hand: Card[], lastHand: PlayedHand | null): { cards: Ca
                 if (c.rank === targetRank + 1) return [c];
                 if (!limitToLow && c.rank === 15 && targetRank < 15) return [c]; // Use 2
             } else {
-                return [c]; // Any single
+                return [c];
             }
         }
         if (targetRank === null && !limitToLow) {
-             // Fallback to high cards if leading and no low cards
              if (normals.length > 0) return [normals[0]];
              if (jokers.length > 0) return [jokers[0]];
         }
@@ -375,13 +358,12 @@ const calculateAiMove = (hand: Card[], lastHand: PlayedHand | null): { cards: Ca
     const findPairWithWild = (targetRank: number | null, limitToLow: boolean = false): Card[] | null => {
         if (!hasJoker) return null;
         const pool = limitToLow ? lowNormals : normals;
-        // Looking for single normal card that matches requirements + joker
         for (const c of pool) {
              if (targetRank !== null) {
                  if (c.rank === targetRank + 1) return [c, jokers[0]];
                  if (!limitToLow && c.rank === 15 && targetRank < 15) return [c, jokers[0]];
              } else {
-                 return [c, jokers[0]]; // Lead with pair using joker
+                 return [c, jokers[0]]; 
              }
         }
         return null;
@@ -402,7 +384,6 @@ const calculateAiMove = (hand: Card[], lastHand: PlayedHand | null): { cards: Ca
                 seq.push(groups[ranks[i+j]]);
             }
             if (valid) {
-                 // FIX: Prevent K-A-2 (15) construction
                  if (current + minLen - 1 > 14) continue; 
 
                 if (targetRank !== null) {
@@ -420,18 +401,15 @@ const calculateAiMove = (hand: Card[], lastHand: PlayedHand | null): { cards: Ca
         const pool = limitToLow ? lowNormals : normals;
         const uniqueNormals = Array.from(new Set(pool.map(c => c.rank))).sort((a,b)=>a-b);
         
-        // Strategy: Iterate potential start ranks
         let startRanks: number[] = [];
         if (targetRank !== null) {
             startRanks = [targetRank + 1];
         } else {
-            // Leading: Try starting from lowest
             startRanks = uniqueNormals;
         }
 
         for (const start of startRanks) {
             const desiredSeq = Array.from({length: minLen}, (_, i) => start + i);
-            // FIX: Ensure Max rank is 14 (A), banning K-A-2
             if (desiredSeq[desiredSeq.length-1] > 14) continue; 
 
             const found: Card[] = [];
@@ -450,21 +428,16 @@ const calculateAiMove = (hand: Card[], lastHand: PlayedHand | null): { cards: Ca
     };
 
     const findBomb = (levelToBeat: number, rankToBeat: number): Card[] | null => {
-        // 1. Normal Bombs
         const groups: {[k:number]: Card[]} = {};
         hand.forEach(c => { if(c.suit !== 'joker') { if(!groups[c.rank]) groups[c.rank]=[]; groups[c.rank].push(c); }});
         
-        // 2. King Bomb
         if (jokers.length === 2 && (99 > levelToBeat)) return jokers;
 
-        // 3. Normal Bombs (3+) & Wild Bombs
         for (const rStr in groups) {
             const r = Number(rStr);
             const count = groups[r].length;
             const jokersAvailable = jokers.length;
             
-            // Try utilizing jokers to make bombs
-            // Max bomb we can make: count + jokersAvailable
             for (let jUsed = 0; jUsed <= jokersAvailable; jUsed++) {
                 const totalCount = count + jUsed;
                 if (totalCount >= 3) {
@@ -478,10 +451,7 @@ const calculateAiMove = (hand: Card[], lastHand: PlayedHand | null): { cards: Ca
         return null;
     };
     
-    // Wrapper for best bomb finding
     const findBestBomb = (levelToBeat: number, rankToBeat: number) => {
-         // Find any bomb better than current
-         // Priority: Smallest Bomb > Smallest Rank
          return findBomb(levelToBeat, rankToBeat);
     };
 
@@ -489,20 +459,14 @@ const calculateAiMove = (hand: Card[], lastHand: PlayedHand | null): { cards: Ca
     let analysis: any = null;
 
     if (!lastHand) {
-        // LEADING STRATEGY: Prioritize Low cards (Rank < 15) to save 2s and Jokers
-        
-        // 1. Low Straight (Normal -> Wild)
         move = findStraight(3, null, true);
         if (!move) move = findStraightWithWild(3, null, true);
         
-        // 2. Low Pair (Normal -> Wild)
         if (!move) move = findPair(null, true);
         if (!move) move = findPairWithWild(null, true);
 
-        // 3. Low Single
         if (!move) move = findSingle(null, true);
 
-        // 4. Fallback to ANY valid move (including High cards)
         if (!move) {
              move = findStraight(3, null);
              if (!move) move = findStraightWithWild(3, null);
@@ -513,14 +477,12 @@ const calculateAiMove = (hand: Card[], lastHand: PlayedHand | null): { cards: Ca
              if (!move) move = findSingle(null);
         }
         
-        // 5. Last resort: Bombs or just first card
         if (!move) {
-             move = findBestBomb(-1, -1); // Any bomb
+             move = findBestBomb(-1, -1); 
         }
         if (!move && hand.length > 0) move = [hand[0]];
 
     } else {
-        // FOLLOWING STRATEGY
         if (lastHand.type === "SINGLE") move = findSingle(lastHand.primaryRank);
         else if (lastHand.type === "PAIR") {
             move = findPair(lastHand.primaryRank);
@@ -531,7 +493,6 @@ const calculateAiMove = (hand: Card[], lastHand: PlayedHand | null): { cards: Ca
             if (!move) move = findStraightWithWild(lastHand.length, lastHand.primaryRank);
         }
 
-        // BOMB Logic (Last Resort)
         if (!move && lastHand.type !== "KING_BOMB") {
             const lvl = lastHand.type === "BOMB" ? lastHand.bombLevel : 0;
             const rk = lastHand.type === "BOMB" ? lastHand.primaryRank : 0;
@@ -699,15 +660,12 @@ export default function GanDengYan() {
   const [joinRoomId, setJoinRoomId] = useState("");
   const [hostRoomId, setHostRoomId] = useState("");
   const [isConnecting, setIsConnecting] = useState(false);
-  
-  // Network Logs
   const [netLogs, setNetLogs] = useState<string[]>([]);
 
   const aiTimeoutRef = useRef<number | null>(null);
   const msgTimeoutRef = useRef<number | null>(null);
   const autoPassTimeoutRef = useRef<number | null>(null);
 
-  // FIX: Stale closures in network listeners
   const playHandRef = useRef<any>(null);
   const nextTurnRef = useRef<any>(null);
 
@@ -715,7 +673,6 @@ export default function GanDengYan() {
     connectionsRef.current = connections;
   }, [connections]);
   
-  // Check for Auto-Join Link
   useEffect(() => {
       const params = new URLSearchParams(window.location.search);
       const roomParam = params.get("room");
@@ -723,14 +680,13 @@ export default function GanDengYan() {
           setJoinRoomId(roomParam);
           setIsAutoJoining(true);
           setLobbyStep("NICKNAME");
-          // Clean URL
           window.history.replaceState({}, document.title, window.location.pathname);
       }
   }, []);
 
   const addLog = (msg: string) => {
       const time = new Date().toLocaleTimeString();
-      setNetLogs(prev => [`[${time}] ${msg}`, ...prev].slice(0, 10)); // Keep last 10 logs
+      setNetLogs(prev => [`[${time}] ${msg}`, ...prev].slice(0, 10)); 
   };
   
   const toggleMute = () => {
@@ -741,7 +697,6 @@ export default function GanDengYan() {
     audio.playClick();
   };
   
-  // Soft Exit Function to prevent 404 on reload
   const exitToLobby = () => {
       if (peer) {
           peer.destroy();
@@ -793,9 +748,8 @@ export default function GanDengYan() {
 
   const initNetwork = useCallback(() => {
     if (peer) return peer;
-    addLog("初始化P2P网络(含腾讯STUN)...");
+    addLog("初始化P2P网络...");
     
-    // FIX: Pass undefined as first arg to ensure random ID generation
     const newPeer = new Peer(undefined, {
        config: PEER_CONFIG,
        debug: 1,
@@ -807,25 +761,8 @@ export default function GanDengYan() {
       addLog("P2P网络就绪，ID获取成功");
     });
     
-    // NEW: Monitor ICE state for debugging
-    // @ts-ignore
-    newPeer.on('iceStateChanged', (state) => {
-        addLog(`网络协商状态: ${state}`);
-    });
-
     newPeer.on('connection', (conn) => {
       addLog(`收到连接请求: ${conn.peer}`);
-      
-      // NEW: Log Connection ICE state
-      // @ts-ignore
-      if (conn.peerConnection) {
-          // @ts-ignore
-          conn.peerConnection.oniceconnectionstatechange = () => {
-             // @ts-ignore
-             addLog(`Conn State: ${conn.peerConnection.iceConnectionState}`);
-          };
-      }
-
       conn.on('data', (data: any) => {
          handleNetworkData(data, conn);
       });
@@ -838,8 +775,6 @@ export default function GanDengYan() {
     });
 
     newPeer.on('error', (err) => {
-        console.error(err);
-        // Suppress network errors if game is running
         if ((err.type === 'network' || err.type === 'peer-unavailable' || err.type === 'socket-closed') && connectionsRef.current.length > 0) {
             addLog(`(后台忽略) 信令波动: ${err.type}`);
             return;
@@ -854,33 +789,23 @@ export default function GanDengYan() {
   }, [peer]);
 
   const handleNetworkData = (data: NetworkAction, conn: DataConnection) => {
-      // Guest receiving State
       if (data.type === "SYNC_STATE") {
           setState(data.state);
           setIsConnecting(false);
           return;
       }
-      
-      // Guest receiving message popup
       if (data.type === "SHOW_MESSAGE") {
           showMessage(data.text, data.duration);
           return;
       }
-      
-      // Heartbeat - Keep connection alive
       if (data.type === "HEARTBEAT") {
           return; 
       }
-
-      // Host receiving Join
       if (data.type === "PLAYER_JOIN") {
          addLog(`玩家 ${data.name} 加入`);
          setGameState(prev => {
-             // Deduplicate OR Reconnect existing player
              const existingPlayer = prev.players.find(p => p.name === data.name);
-             
              if (existingPlayer) {
-                 // RECONNECT LOGIC
                  addLog(`玩家 ${data.name} 重连成功`);
                  const updatedPlayers = prev.players.map(p => 
                      p.name === data.name ? { ...p, peerId: data.peerId } : p
@@ -889,8 +814,6 @@ export default function GanDengYan() {
                  if (conn.open) conn.send({ type: "SYNC_STATE", state: nextState });
                  return nextState;
              }
-             
-             // New Player Logic
              if (prev.players.some(p => p.peerId === data.peerId)) return prev;
 
              const newPId = prev.players.length;
@@ -907,15 +830,12 @@ export default function GanDengYan() {
                  peerId: data.peerId
              };
              const nextState = { ...prev, players: [...prev.players, newPlayer] };
-             // Send immediate sync to this connection
              if (conn.open) conn.send({ type: "SYNC_STATE", state: nextState });
              
              return nextState;
          });
          return;
       }
-
-      // Host receiving Actions via REFS to ensure latest closure
       if (data.type === "ACTION_PLAY") {
           if (playHandRef.current) playHandRef.current(data.cards, data.analysis);
       }
@@ -937,7 +857,6 @@ export default function GanDengYan() {
       });
   }, []);
 
-  // Sync state wrapper
   const setGameState = (updater: (prev: GameState) => GameState) => {
       setState(prev => {
           const next = updater(prev);
@@ -950,7 +869,6 @@ export default function GanDengYan() {
 
   const createRoom = () => {
       addLog("正在创建房间...");
-      // Ensure clean state
       if (peer) { peer.destroy(); setPeer(null); }
       setIsConnecting(true);
       
@@ -960,7 +878,6 @@ export default function GanDengYan() {
           
           addLog(`注册房间ID: ${simpleId}`);
           
-          // NEW: Host also uses Tencent STUN
           const hostPeer = new Peer(fullId, {
               config: PEER_CONFIG,
               secure: true
@@ -1004,25 +921,12 @@ export default function GanDengYan() {
           
           hostPeer.on('connection', (conn) => {
               addLog(`有连接进入...`);
-              
-              // NEW: Log Connection ICE state
-              // @ts-ignore
-              if (conn.peerConnection) {
-                  // @ts-ignore
-                  conn.peerConnection.oniceconnectionstatechange = () => {
-                     // @ts-ignore
-                     addLog(`Conn State: ${conn.peerConnection.iceConnectionState}`);
-                  };
-              }
-              
               conn.on('data', (d: any) => handleNetworkData(d, conn));
               conn.on('open', () => {
                  addLog(`与 ${conn.peer.slice(-4)} 握手成功！`);
                  setConnections(prev => [...prev, conn]);
               });
               conn.on('error', (e) => addLog(`Conn Err: ${e}`));
-              
-              // Clean up if not opened in time, Extended timeout for reliability
               setTimeout(() => { if (!conn.open) conn.close(); }, 15000);
           });
           
@@ -1049,8 +953,6 @@ export default function GanDengYan() {
       
       setTimeout(() => {
           const fullId = APP_ID_PREFIX + joinRoomId;
-          
-          // FIX: Pass undefined as first arg to ensure random ID generation
           const guestPeer = new Peer(undefined, {
               config: PEER_CONFIG,
               secure: true
@@ -1060,12 +962,10 @@ export default function GanDengYan() {
               setMyPeerId(id);
               addLog("客户端就绪，发起连接...");
               
-              // NEW: Remove reliable:true for better compatibility
               const conn = guestPeer.connect(fullId, {
                   serialization: 'json'
               });
               
-              // Add a fallback timeout if connection hangs
               const timeoutId = setTimeout(() => {
                   if (!conn.open) {
                       addLog("连接超时！请检查房间号或防火墙");
@@ -1092,7 +992,7 @@ export default function GanDengYan() {
                      showMessage(data.text, data.duration);
                  }
                  if (data.type === "HEARTBEAT") {
-                     return; // Keep connection alive
+                     return; 
                  }
               });
               
@@ -1114,9 +1014,7 @@ export default function GanDengYan() {
           });
           
           guestPeer.on('error', (e) => {
-              // Suppress errors if connected
               if ((e.type === 'network' || e.type === 'peer-unavailable') && connectionsRef.current.length > 0) return;
-              
               addLog(`Guest Error: ${e.type}`);
               setIsConnecting(false);
               if (e.type === 'peer-unavailable') {
@@ -1138,8 +1036,6 @@ export default function GanDengYan() {
           showMessage("复制失败", 2000);
       });
   };
-
-  // --- GAME LOGIC ---
 
   const dealAndPlay = (players: Player[], deck: Card[], dealerIdx: number, initialScores: {[k:number]:number}, initialHistory: {[k:number]:number}[]) => {
         players.forEach((p, idx) => {
@@ -1166,7 +1062,6 @@ export default function GanDengYan() {
         }));
         
         audio.playDeal();
-        // FIX: Conditional Message based on history
         const msg = initialHistory.length === 0 
            ? `${players[dealerIdx].name} 成为首局随机庄家`
            : `${players[dealerIdx].name} 赢得上局，优先出牌`;
@@ -1207,7 +1102,6 @@ export default function GanDengYan() {
             return;
         }
     } else {
-        // Single Player Setup
         for (let i = 0; i < count; i++) {
           const isHuman = i === 0;
           players.push({
@@ -1293,14 +1187,13 @@ export default function GanDengYan() {
       showMessage(msg, 3000);
       broadcastMessage(msg, 3000);
 
-      // Create a zero-delta history entry for the draw
       const zeroDeltas: {[k:number]:number} = {};
       state.players.forEach(p => zeroDeltas[p.id] = 0);
 
       setGameState(prev => ({
           ...prev,
           lastWinnerIndex: -1,
-          status: "scoring", // Go to scoring screen instead of auto-restart
+          status: "scoring", 
           gameHistory: [...prev.gameHistory, zeroDeltas]
       }));
   }, [state.scores, state.players, showMessage, broadcastMessage]);
@@ -1314,7 +1207,6 @@ export default function GanDengYan() {
         let roundWinner = currentState.lastWinnerIndex;
         let nextRoundsFinishedAfterDeckEmpty = currentState.roundsFinishedAfterDeckEmpty;
 
-        // FIX: Don't show 'PASS' bubble if the round is about to clear
         if (nextPasses < currentState.players.length - 1) {
              nextPlayers[currentState.currentPlayerIndex].lastAction = passed ? "PASS" : "PLAY";
         }
@@ -1334,7 +1226,6 @@ export default function GanDengYan() {
                 audio.playDeal();
             } else {
                 showMessage("牌堆空了！无法补牌。", 2000);
-                // Only increment stalemate counter if deck is empty AND round finished
                 nextRoundsFinishedAfterDeckEmpty += 1;
             }
             
@@ -1370,7 +1261,6 @@ export default function GanDengYan() {
     setGameState(prev => {
         const playerIndex = prev.currentPlayerIndex;
         const newPlayers = [...prev.players];
-        // Shallow copy player object to avoid mutation
         const player = { ...newPlayers[playerIndex] };
         newPlayers[playerIndex] = player;
         
@@ -1420,7 +1310,6 @@ export default function GanDengYan() {
       nextTurnRef.current = nextTurn;
   }, [playHand, nextTurn]);
 
-  // Heartbeat & Redundant Broadcast
   useEffect(() => {
       if (!state.isHost) return;
       const interval = setInterval(() => {
@@ -1431,7 +1320,6 @@ export default function GanDengYan() {
       return () => clearInterval(interval);
   }, [state.isHost]);
   
-  // Guest side heartbeat
   useEffect(() => {
       if (state.isHost) return;
       if (state.status === "lobby") return;
@@ -1480,7 +1368,6 @@ export default function GanDengYan() {
           if (bestMove) {
               setSelectedCardIds(bestMove.cards.map(c => c.id));
           } else {
-              // ALWAYS AUTO PASS IF NO MOVE IS AVAILABLE
               showMessage("无牌可出，自动过...", 1000);
               autoPassTimeoutRef.current = window.setTimeout(() => {
                   handleUserPass();
@@ -1488,7 +1375,6 @@ export default function GanDengYan() {
           }
       }
   }, [state.currentPlayerIndex, state.status, state.myPlayerId, state.tablePile]);
-
 
   useEffect(() => {
     if (state.status !== "playing") return;
@@ -1503,7 +1389,6 @@ export default function GanDengYan() {
         if (result) {
             playHand(result.cards, result.analysis);
         } else {
-            // FIX: Don't play Pass sound if this pass clears the table (Round Over)
             const willClearRound = state.passesInARow + 1 >= state.players.length - 1;
             if (!willClearRound) {
                 audio.playPass();
@@ -1542,7 +1427,6 @@ export default function GanDengYan() {
   const handleUserPass = () => {
     if (state.tablePile.length === 0) { showMessage("你必须出牌，不能过！", 1500); return; }
     
-    // FIX: Don't play Pass sound if this pass clears the table (Round Over)
     const willClearRound = state.passesInARow + 1 >= state.players.length - 1;
     if (!willClearRound) {
         audio.playPass();
@@ -1604,7 +1488,6 @@ export default function GanDengYan() {
     return "pos-top";
   };
   
-  // FIX: Precise animation mapping
   const getAnimClass = (pid: number) => {
       if (pid === myId) return "anim-slide-bottom";
       const pos = getOpponentPositionStyle(pid, state.players.length);
@@ -1639,8 +1522,6 @@ export default function GanDengYan() {
           showMessage("复制失败，请截图", 1500);
       });
   };
-
-  // --- RENDER ---
 
   const myId = state.myPlayerId || 0;
   const user = state.players[myId] || { hand: [], lastAction: null }; 
@@ -1688,7 +1569,6 @@ export default function GanDengYan() {
                 )}
                 <button onClick={exitToLobby} style={{ color: "#ccc", background: "none", border: "none", textDecoration: "underline" }}>退出</button>
                 
-                {/* Network Logs Console */}
                 <div style={{ width: "100%", background: "rgba(0,0,0,0.8)", color: "#0f0", fontFamily: "monospace", fontSize: "10px", padding: "5px", borderRadius: "4px", height: "80px", overflowY: "auto", marginTop: "10px" }}>
                     {netLogs.map((log, i) => <div key={i}>{log}</div>)}
                 </div>
@@ -1784,7 +1664,6 @@ export default function GanDengYan() {
                     <button onClick={() => setLobbyStep("MAIN")} style={{ background: "transparent", border: "none", color: "#ccc", textDecoration: "underline" }}>返回</button>
                   )}
                   
-                  {/* Network Logs Console */}
                   <div style={{ width: "100%", background: "rgba(0,0,0,0.8)", color: "#0f0", fontFamily: "monospace", fontSize: "10px", padding: "5px", borderRadius: "4px", height: "80px", overflowY: "auto", marginTop: "5px" }}>
                     {netLogs.length === 0 && <div style={{color: "#555"}}>网络日志...</div>}
                     {netLogs.map((log, i) => <div key={i}>{log}</div>)}
@@ -1810,7 +1689,6 @@ export default function GanDengYan() {
                   </button>
                   <button onClick={() => setLobbyStep("NICKNAME")} style={{ background: "transparent", border: "none", color: "#ccc", textDecoration: "underline" }}>返回</button>
                   
-                  {/* Network Logs Console */}
                   <div style={{ width: "100%", background: "rgba(0,0,0,0.8)", color: "#0f0", fontFamily: "monospace", fontSize: "10px", padding: "5px", borderRadius: "4px", height: "80px", overflowY: "auto", marginTop: "5px" }}>
                     {netLogs.length === 0 && <div style={{color: "#555"}}>网络日志...</div>}
                     {netLogs.map((log, i) => <div key={i}>{log}</div>)}
@@ -1834,7 +1712,6 @@ export default function GanDengYan() {
                   </button>
                   <button onClick={() => setLobbyStep("MULTI_LOBBY")} style={{ background: "transparent", border: "none", color: "#ccc", textDecoration: "underline" }}>返回</button>
                   
-                  {/* Network Logs Console */}
                   <div style={{ width: "100%", background: "rgba(0,0,0,0.8)", color: "#0f0", fontFamily: "monospace", fontSize: "10px", padding: "5px", borderRadius: "4px", height: "80px", overflowY: "auto", marginTop: "5px" }}>
                     {netLogs.length === 0 && <div style={{color: "#555"}}>网络日志...</div>}
                     {netLogs.map((log, i) => <div key={i}>{log}</div>)}
@@ -1848,9 +1725,6 @@ export default function GanDengYan() {
     );
   }
 
-  // Common Game Render
-  
-  // --- REPORT MODAL ---
   if (showReport) {
       return (
         <div className="full-screen-overlay" style={{ zIndex: 200 }}>
@@ -2008,6 +1882,10 @@ export default function GanDengYan() {
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", position: "relative", overflow: "hidden" }}>
       
+      <div style={{ position: "absolute", top: "10px", left: "10px", zIndex: 50, color: "white", textShadow: "1px 1px 2px black", fontWeight: "bold", fontSize: "1.2rem", background: "rgba(0,0,0,0.3)", padding: "5px 12px", borderRadius: "15px" }}>
+         第 {state.gameHistory.length + 1} 局
+      </div>
+
       <div style={{ position: "absolute", top: "10px", right: "10px", zIndex: 50, display: "flex", gap: "10px" }}>
         <button onClick={toggleMute} style={{ background: "rgba(0,0,0,0.4)", color: "white", border: "2px solid white", borderRadius: "50%", width: "40px", height: "40px", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: "16px" }}>{muted ? "🔇" : "🔊"}</button>
         <button onClick={exitToLobby} style={{ background: "rgba(0,0,0,0.4)", color: "white", border: "1px solid white", borderRadius: "20px", padding: "5px 15px", cursor: "pointer", height: "40px", fontWeight: "bold" }}>退出</button>
@@ -2070,14 +1948,14 @@ export default function GanDengYan() {
                 <button 
                   onClick={handleUserPass}
                   disabled={state.tablePile.length === 0 && state.lastWinnerIndex === myId}
-                  style={{ padding: "10px 30px", background: "#e0e0e0", border: "none", borderRadius: "20px", fontWeight: "bold", fontSize: "1rem", cursor: "pointer", boxShadow: "0 2px 0 #9e9e9e" }}
+                  style={{ padding: "10px 20px", background: "#e0e0e0", border: "none", borderRadius: "20px", fontWeight: "bold", fontSize: "1rem", cursor: "pointer", boxShadow: "0 2px 0 #9e9e9e" }}
                 >
                   不要
                 </button>
                 <button 
                   onClick={handleUserPlay} 
                   disabled={selectedCardIds.length === 0}
-                  style={{ padding: "10px 30px", background: "#fbc02d", border: "none", borderRadius: "20px", fontWeight: "bold", fontSize: "1rem", opacity: selectedCardIds.length === 0 ? 0.5 : 1, cursor: "pointer", boxShadow: "0 2px 0 #f57f17" }}
+                  style={{ padding: "10px 20px", background: "#fbc02d", border: "none", borderRadius: "20px", fontWeight: "bold", fontSize: "1rem", opacity: selectedCardIds.length === 0 ? 0.5 : 1, cursor: "pointer", boxShadow: "0 2px 0 #f57f17" }}
                 >
                   出牌
                 </button>
