@@ -73,6 +73,7 @@ const BOT_COLORS = ["#ef5350", "#ab47bc", "#5c6bc0", "#26c6da", "#66bb6a", "#ffa
 const BOT_AVATARS = ["🐼", "🐨", "🦊", "🐶", "🐱", "🐰", "🐹", "🐯"];
 const APP_ID_PREFIX = "gdy-game-v1-"; // Unique prefix to avoid collision on public PeerServer
 const STORAGE_KEY_NICKNAME = "gdy_saved_nickname"; // LocalStorage Key
+const STORAGE_KEY_GAME_RECOVERY = "gdy_recovery_v1"; // For Host crash recovery
 
 // Tencent & Xiaomi STUN servers + Metered.ca TURN for global connectivity
 const PEER_CONFIG = {
@@ -655,6 +656,10 @@ export default function GanDengYan() {
   const [loadingPlayerCount, setLoadingPlayerCount] = useState<number | null>(null);
   const [isAutoJoining, setIsAutoJoining] = useState(false);
   
+  // Host Recovery Logic
+  const [recoverData, setRecoverData] = useState<{roomId: string, state: GameState} | null>(null);
+  const [hostOffline, setHostOffline] = useState(false); // Guest side flag
+
   // Network State
   const [peer, setPeer] = useState<Peer | null>(null);
   const [myPeerId, setMyPeerId] = useState<string>("");
@@ -710,12 +715,24 @@ export default function GanDengYan() {
     connectionsRef.current = connections;
   }, [connections]);
   
-  // Load saved nickname and handle auto-join via URL
+  // Load saved nickname and check for crash recovery
   useEffect(() => {
       const stored = localStorage.getItem(STORAGE_KEY_NICKNAME);
       if (stored) {
           setSavedNickname(stored);
           setNickname(stored);
+      }
+
+      // Check for unfinished game as host
+      const recovery = localStorage.getItem(STORAGE_KEY_GAME_RECOVERY);
+      if (recovery) {
+          try {
+              const parsed = JSON.parse(recovery);
+              // Only offer recovery if it looks valid and we were the host
+              if (parsed.roomId && parsed.state && parsed.state.isHost) {
+                  setRecoverData(parsed);
+              }
+          } catch(e) { console.error("Bad recovery data", e); }
       }
 
       const params = new URLSearchParams(window.location.search);
@@ -737,6 +754,29 @@ export default function GanDengYan() {
           }
       }
   }, []);
+
+  // Save Game State for Recovery (Host Only)
+  useEffect(() => {
+      if (state.isHost && state.status !== 'lobby' && hostRoomId) {
+          localStorage.setItem(STORAGE_KEY_GAME_RECOVERY, JSON.stringify({
+              roomId: hostRoomId,
+              state: state
+          }));
+      }
+  }, [state, hostRoomId]);
+
+  // Guest Auto-Reconnect Loop when Host is offline
+  useEffect(() => {
+      if (hostOffline && !isConnecting && !state.isHost && state.roomId) {
+          const timer = setInterval(() => {
+              addLog(`尝试重连房主...`);
+              if (joinRoomRef.current) {
+                  joinRoomRef.current(state.roomId, nickname);
+              }
+          }, 3000); // Retry every 3 seconds
+          return () => clearInterval(timer);
+      }
+  }, [hostOffline, isConnecting, state.isHost, state.roomId, nickname]);
 
   const addLog = (msg: string) => {
       const time = new Date().toLocaleTimeString();
@@ -775,6 +815,11 @@ export default function GanDengYan() {
       setJoinRoomId("");
       setHostRoomId("");
       setIsConnecting(false);
+      setHostOffline(false);
+      
+      // Clear recovery data on manual exit
+      localStorage.removeItem(STORAGE_KEY_GAME_RECOVERY);
+      setRecoverData(null);
       
       setState({
         status: "lobby",
@@ -860,6 +905,8 @@ export default function GanDengYan() {
       if (data.type === "SYNC_STATE") {
           setState(data.state);
           setIsConnecting(false);
+          // If we receive state, it means host is back
+          setHostOffline(false);
           return;
       }
       if (data.type === "SHOW_MESSAGE") {
@@ -937,14 +984,19 @@ export default function GanDengYan() {
       });
   };
 
-  const createRoom = () => {
+  const createRoom = (restoreId?: string, restoreState?: GameState) => {
       requestWakeLock(); // Request screen keep awake
-      addLog("正在创建房间...");
+      if (restoreState) {
+          addLog("正在恢复房间...");
+      } else {
+          addLog("正在创建房间...");
+      }
+      
       if (peer) { peer.destroy(); setPeer(null); }
       setIsConnecting(true);
       
       setTimeout(() => {
-          const simpleId = Math.floor(1000 + Math.random() * 9000).toString();
+          const simpleId = restoreId || Math.floor(1000 + Math.random() * 9000).toString();
           const fullId = APP_ID_PREFIX + simpleId;
           
           addLog(`注册房间ID: ${simpleId}`);
@@ -958,37 +1010,52 @@ export default function GanDengYan() {
               setMyPeerId(id);
               setHostRoomId(simpleId);
               setIsConnecting(false);
-              addLog("房间创建成功！等待玩家...");
-              setState({
-                  ...state,
-                  status: "waiting",
-                  isHost: true,
-                  myPlayerId: 0,
-                  roomId: simpleId,
-                  players: [{
-                      id: 0,
-                      name: nickname || savedNickname || "房主",
-                      isAi: false,
-                      hand: [],
-                      cardsLeft: 0,
-                      hasPlayed: false,
-                      lastAction: null,
-                      role: 'host',
-                      color: 'transparent',
-                      peerId: id,
-                      online: true
-                  }],
-                  scores: {},
-                  gameHistory: [],
-                  passesInARow: 0,
-                  roundsFinishedAfterDeckEmpty: 0,
-                  tablePile: [],
-                  deck: [],
-                  currentPlayerIndex: 0,
-                  lastWinnerIndex: 0,
-                  dealerId: 0,
-                  bombCount: 0
-              });
+              
+              if (restoreState) {
+                  addLog("牌局状态已恢复！等待重连...");
+                  // Ensure current player is updated to match self peerId just in case
+                  const updatedPlayers = restoreState.players.map(p => 
+                      p.role === 'host' ? { ...p, peerId: id, online: true } : { ...p, online: false } // Mark others offline until they reconnect
+                  );
+                  setState({
+                      ...restoreState,
+                      isHost: true,
+                      myPlayerId: 0,
+                      players: updatedPlayers
+                  });
+              } else {
+                  addLog("房间创建成功！等待玩家...");
+                  setState({
+                      ...state,
+                      status: "waiting",
+                      isHost: true,
+                      myPlayerId: 0,
+                      roomId: simpleId,
+                      players: [{
+                          id: 0,
+                          name: nickname || savedNickname || "房主",
+                          isAi: false,
+                          hand: [],
+                          cardsLeft: 0,
+                          hasPlayed: false,
+                          lastAction: null,
+                          role: 'host',
+                          color: 'transparent',
+                          peerId: id,
+                          online: true
+                      }],
+                      scores: {},
+                      gameHistory: [],
+                      passesInARow: 0,
+                      roundsFinishedAfterDeckEmpty: 0,
+                      tablePile: [],
+                      deck: [],
+                      currentPlayerIndex: 0,
+                      lastWinnerIndex: 0,
+                      dealerId: 0,
+                      bombCount: 0
+                  });
+              }
           });
           
           hostPeer.on('connection', (conn) => {
@@ -1000,7 +1067,7 @@ export default function GanDengYan() {
               });
               conn.on('error', (e) => addLog(`Conn Err: ${e}`));
               
-              // NEW: Handle disconnection (The Fix)
+              // NEW: Handle disconnection
               conn.on('close', () => {
                   addLog(`连接断开: ${conn.peer.slice(-4)}`);
                   setConnections(prev => prev.filter(c => c.peer !== conn.peer));
@@ -1037,7 +1104,7 @@ export default function GanDengYan() {
           hostPeer.on('error', (e) => {
              addLog(`Host Error: ${e.type}`);
              setIsConnecting(false);
-             if (e.type === 'unavailable-id') showMessage("ID冲突，请重试", 2000);
+             if (e.type === 'unavailable-id') showMessage("ID已被占用，恢复失败，请稍后", 3000);
           });
           
           setPeer(hostPeer);
@@ -1054,7 +1121,8 @@ export default function GanDengYan() {
           return;
       }
       setNetLogs([]);
-      addLog(`正在查找房间: ${targetRoomId}...`);
+      // Only show log if explicit join, not silent reconnect
+      if (!hostOffline) addLog(`正在查找房间: ${targetRoomId}...`);
       setIsConnecting(true);
       
       if (peer) { peer.destroy(); setPeer(null); }
@@ -1068,7 +1136,7 @@ export default function GanDengYan() {
           
           guestPeer.on('open', (id) => {
               setMyPeerId(id);
-              addLog("客户端就绪，发起连接...");
+              if (!hostOffline) addLog("客户端就绪，发起连接...");
               
               const conn = guestPeer.connect(fullId, {
                   serialization: 'json'
@@ -1076,17 +1144,20 @@ export default function GanDengYan() {
               
               const timeoutId = setTimeout(() => {
                   if (!conn.open) {
-                      addLog("连接超时！请检查房间号或防火墙");
-                      showMessage("连接超时，请重试", 3000);
+                      if (!hostOffline) {
+                          addLog("连接超时！请检查房间号或防火墙");
+                          showMessage("连接超时，请重试", 3000);
+                      }
                       setIsConnecting(false);
                   }
-              }, 20000);
+              }, 10000); // Reduced timeout for faster retry cycles
 
               conn.on('open', () => {
                  clearTimeout(timeoutId);
-                 addLog("通道打开！发送加入请求...");
+                 addLog("通道打开！");
                  showMessage("已连接房主！", 1000);
                  conn.send({ type: "PLAYER_JOIN", name: targetName, peerId: id });
+                 setHostOffline(false); // Host is back!
               });
               
               conn.on('data', (data: any) => {
@@ -1095,6 +1166,7 @@ export default function GanDengYan() {
                      const me = s.players.find(p => p.peerId === guestPeer.id); 
                      setState({ ...s, isHost: false, myPlayerId: me ? me.id : -1 });
                      setIsConnecting(false);
+                     setHostOffline(false);
                  }
                  if (data.type === "SHOW_MESSAGE") {
                      showMessage(data.text, data.duration);
@@ -1104,12 +1176,25 @@ export default function GanDengYan() {
                  }
               });
               
+              // Handle Host Disconnect
               conn.on('close', () => {
                   clearTimeout(timeoutId);
-                  addLog("连接已断开");
-                  showMessage("连接断开", 3000);
+                  
+                  // Only exit to lobby if we haven't started playing or are just in lobby
+                  // If we are playing, enter 'frozen' state
+                  setState(current => {
+                      if (current.status === 'playing' || current.status === 'celebrating' || current.status === 'scoring') {
+                          addLog("⚠️ 与房主断开连接，尝试重连...");
+                          setHostOffline(true);
+                          return current; // Keep game state visible
+                      } else {
+                          addLog("连接已断开");
+                          showMessage("连接断开", 3000);
+                          return { ...current, status: 'lobby' };
+                      }
+                  });
+                  
                   setIsConnecting(false);
-                  setState(prev => ({...prev, status: 'lobby'}));
               });
               
               conn.on('error', (e) => {
@@ -1123,13 +1208,12 @@ export default function GanDengYan() {
           
           guestPeer.on('error', (e) => {
               if ((e.type === 'network' || e.type === 'peer-unavailable') && connectionsRef.current.length > 0) return;
-              addLog(`Guest Error: ${e.type}`);
+              // Don't log spam during reconnect loop
+              if (!hostOffline) addLog(`Guest Error: ${e.type}`);
               setIsConnecting(false);
               if (e.type === 'peer-unavailable') {
-                  showMessage("房间不存在", 2000);
-              } else {
-                  showMessage("连接失败", 2000);
-              }
+                  if (!hostOffline) showMessage("房间不存在", 2000);
+              } 
           });
           
           setPeer(guestPeer);
@@ -1139,7 +1223,7 @@ export default function GanDengYan() {
   // Expose joinRoom to useEffect via ref to avoid stale closures
   useEffect(() => {
       joinRoomRef.current = joinRoom;
-  }, [nickname, joinRoomId]); // Dependencies usually fine, but logic is inside function
+  }, [nickname, joinRoomId, hostOffline]); 
 
   const copyInviteLink = () => {
       const url = `${window.location.protocol}//${window.location.host}${window.location.pathname}?room=${hostRoomId}`;
@@ -1288,6 +1372,10 @@ export default function GanDengYan() {
       tablePile: [...prev.tablePile, lastHand] 
     }));
     
+    // Clear recovery data on win to avoid restoring finished games
+    localStorage.removeItem(STORAGE_KEY_GAME_RECOVERY);
+    setRecoverData(null);
+
     setTimeout(() => {
       setGameState(prev => ({
         ...prev,
@@ -1306,6 +1394,10 @@ export default function GanDengYan() {
 
       const zeroDeltas: {[k:number]:number} = {};
       state.players.forEach(p => zeroDeltas[p.id] = 0);
+      
+      // Clear recovery on draw
+      localStorage.removeItem(STORAGE_KEY_GAME_RECOVERY);
+      setRecoverData(null);
 
       setGameState(prev => ({
           ...prev,
@@ -1703,6 +1795,19 @@ export default function GanDengYan() {
                    </div>
                )}
 
+               {recoverData && (
+                  <button
+                    onClick={() => {
+                        audio.init();
+                        audio.playClick();
+                        createRoom(recoverData.roomId, recoverData.state);
+                    }}
+                    style={{ padding: "10px 30px", fontSize: "1.2rem", background: "#66bb6a", border: "2px solid #43a047", borderRadius: "25px", cursor: "pointer", fontWeight: "bold", width: "240px", color: "white", marginBottom: "10px", animation: "popIn 0.5s" }}
+                  >
+                    ♻️ 恢复房间 [{recoverData.roomId}]
+                  </button>
+               )}
+
                <button 
                  onClick={() => { audio.init(); setLobbyStep("SELECT_COUNT"); audio.playClick(); requestWakeLock(); }}
                  style={{ padding: "15px 40px", fontSize: "1.5rem", background: "#fbc02d", border: "none", borderRadius: "30px", cursor: "pointer", fontWeight: "bold", boxShadow: "0 4px 0 #f57f17", width: "240px" }}
@@ -1814,7 +1919,7 @@ export default function GanDengYan() {
               <div style={{ display: "flex", flexDirection: "column", gap: "15px", width: "100%", alignItems: "center" }}>
                   <div style={{color: "#fff", marginBottom: "5px"}}>你好，{nickname}</div>
                   <button 
-                    onClick={createRoom} 
+                    onClick={() => createRoom()} 
                     disabled={isConnecting}
                     style={{ padding: "15px 40px", fontSize: "1.3rem", background: isConnecting ? "#8bc34a88" : "#8bc34a", border: "none", borderRadius: "30px", width: "240px", cursor: isConnecting ? "wait" : "pointer" }}
                   >
@@ -2080,6 +2185,20 @@ export default function GanDengYan() {
           {lastMessage}
         </div>
       </div>
+
+      {hostOffline && (
+          <div className="full-screen-overlay" style={{ zIndex: 999 }}>
+               <div style={{ fontSize: "3rem", marginBottom: "20px" }}>🔌</div>
+               <h2 style={{ color: "white", margin: "10px" }}>房主已断线</h2>
+               <div style={{ color: "#ccc" }}>正在尝试重新连接...</div>
+               <div style={{ marginTop: "20px" }}>
+                   <div style={{ width: "40px", height: "40px", border: "4px solid #fff", borderTop: "4px solid transparent", borderRadius: "50%", animation: "deal 1s linear infinite" }}></div>
+               </div>
+               <button onClick={exitToLobby} style={{ marginTop: "30px", background: "transparent", border: "1px solid white", padding: "5px 15px", color: "white", borderRadius: "20px" }}>
+                   退出
+               </button>
+          </div>
+      )}
 
       <div style={{ height: "260px", display: "flex", flexDirection: "column", justifyContent: "flex-end", paddingBottom: "20px", background: "linear-gradient(to top, rgba(0,0,0,0.6), transparent)", zIndex: 20, position: "relative" }}>
          
