@@ -961,6 +961,25 @@ export default function GanDengYan() {
                  setConnections(prev => [...prev, conn]);
               });
               conn.on('error', (e) => addLog(`Conn Err: ${e}`));
+              
+              // NEW: Handle disconnection (The Fix)
+              conn.on('close', () => {
+                  addLog(`连接断开: ${conn.peer.slice(-4)}`);
+                  setConnections(prev => prev.filter(c => c.peer !== conn.peer));
+                  
+                  setGameState(prev => {
+                      if (prev.status === 'waiting') {
+                          const pName = prev.players.find(p => p.peerId === conn.peer)?.name || "玩家";
+                          showMessage(`${pName} 已退出`, 2000);
+                          const remaining = prev.players.filter(p => p.peerId !== conn.peer);
+                          // Re-index
+                          const reIndexed = remaining.map((p, idx) => ({ ...p, id: idx }));
+                          return { ...prev, players: reIndexed };
+                      }
+                      return prev;
+                  });
+              });
+
               setTimeout(() => { if (!conn.open) conn.close(); }, 15000);
           });
           
@@ -1035,7 +1054,7 @@ export default function GanDengYan() {
               
               conn.on('close', () => {
                   clearTimeout(timeoutId);
-                  addLog("连接已断断");
+                  addLog("连接已断开");
                   showMessage("连接断开", 3000);
                   setIsConnecting(false);
                   setState(prev => ({...prev, status: 'lobby'}));
