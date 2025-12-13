@@ -1106,7 +1106,7 @@ export default function GanDengYan() {
           const isHuman = i === 0;
           players.push({
             id: i,
-            name: isHuman ? "你" : `机器人${i}`,
+            name: isHuman ? "你" : `bot${i}`,
             isAi: !isHuman,
             hand: [],
             cardsLeft: 0,
@@ -1525,6 +1525,7 @@ export default function GanDengYan() {
 
   const myId = state.myPlayerId || 0;
   const user = state.players[myId] || { hand: [], lastAction: null }; 
+  const isDealer = state.dealerId === myId;
 
   if (state.status === "lobby" || state.status === "waiting") {
     return (
@@ -1877,7 +1878,6 @@ export default function GanDengYan() {
   const squeeze = cardCount <= 5 ? -40 : -40 - ((cardCount - 5) * 4);
   const cardOverlap = Math.max(-70, squeeze);
   const isMyTurn = state.currentPlayerIndex === myId;
-  const isDealer = state.dealerId === myId;
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", position: "relative", overflow: "hidden" }}>
@@ -1962,6 +1962,18 @@ export default function GanDengYan() {
               </>
             )}
 
+            {isDealer && (
+                <div className="dealer-badge" style={{ 
+                    position: "absolute", 
+                    top: "50%", 
+                    left: "20px", 
+                    transform: "translateY(-50%)",
+                    width: "40px", height: "40px", fontSize: "20px", 
+                    border: "2px solid white", boxShadow: "0 2px 5px rgba(0,0,0,0.5)",
+                    zIndex: 25
+                }}>庄</div>
+            )}
+
              <div style={{ 
                  position: "absolute", 
                  top: 0, bottom: 0, margin: "auto 0", height: "fit-content",
@@ -1972,7 +1984,6 @@ export default function GanDengYan() {
              }}>
                 <div style={{ fontSize: "20px" }}>🂠</div>
                 <span style={{ fontSize: "1rem", whiteSpace: "nowrap", fontWeight: "bold" }}>剩余 {state.deck.length}</span>
-                {isDealer && <div className="dealer-badge" style={{ position: "static" }}>庄</div>}
              </div>
          </div>
 
