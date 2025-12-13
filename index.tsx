@@ -71,6 +71,7 @@ const RANKS = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 const BOT_COLORS = ["#ef5350", "#ab47bc", "#5c6bc0", "#26c6da", "#66bb6a", "#ffa726", "#8d6e63"];
 const BOT_AVATARS = ["🐼", "🐨", "🦊", "🐶", "🐱", "🐰", "🐹", "🐯"];
 const APP_ID_PREFIX = "gdy-game-v1-"; // Unique prefix to avoid collision on public PeerServer
+const STORAGE_KEY_NICKNAME = "gdy_saved_nickname"; // LocalStorage Key
 
 // Tencent & Xiaomi STUN servers + Metered.ca TURN for global connectivity
 const PEER_CONFIG = {
@@ -646,6 +647,7 @@ export default function GanDengYan() {
   const [lastMessage, setLastMessage] = useState<string>("");
   const [lobbyStep, setLobbyStep] = useState<"MAIN" | "SELECT_COUNT" | "MULTI_LOBBY" | "JOIN_ROOM" | "NICKNAME">("MAIN");
   const [nickname, setNickname] = useState("");
+  const [savedNickname, setSavedNickname] = useState<string | null>(null); // Persistence State
   const [bombToast, setBombToast] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
   const [showReport, setShowReport] = useState(false);
@@ -668,19 +670,37 @@ export default function GanDengYan() {
 
   const playHandRef = useRef<any>(null);
   const nextTurnRef = useRef<any>(null);
+  const joinRoomRef = useRef<any>(null); // For auto-join
 
   useEffect(() => {
     connectionsRef.current = connections;
   }, [connections]);
   
+  // Load saved nickname and handle auto-join via URL
   useEffect(() => {
+      const stored = localStorage.getItem(STORAGE_KEY_NICKNAME);
+      if (stored) {
+          setSavedNickname(stored);
+          setNickname(stored);
+      }
+
       const params = new URLSearchParams(window.location.search);
       const roomParam = params.get("room");
+      
       if (roomParam && roomParam.length === 4) {
           setJoinRoomId(roomParam);
           setIsAutoJoining(true);
-          setLobbyStep("NICKNAME");
           window.history.replaceState({}, document.title, window.location.pathname);
+          
+          if (stored) {
+               // If we have a nickname and a room, join immediately
+               // Use a timeout to ensure state is settled or refs are ready
+               setTimeout(() => {
+                   if (joinRoomRef.current) joinRoomRef.current(roomParam, stored);
+               }, 500);
+          } else {
+               setLobbyStep("NICKNAME");
+          }
       }
   }, []);
 
@@ -695,6 +715,20 @@ export default function GanDengYan() {
     audio.muted = next;
     audio.init();
     audio.playClick();
+  };
+  
+  const saveNickname = (name: string) => {
+      const cleanName = name.trim();
+      if (!cleanName) return;
+      localStorage.setItem(STORAGE_KEY_NICKNAME, cleanName);
+      setSavedNickname(cleanName);
+      setNickname(cleanName);
+  };
+
+  const clearSavedNickname = () => {
+      localStorage.removeItem(STORAGE_KEY_NICKNAME);
+      setSavedNickname(null);
+      setNickname("");
   };
   
   const exitToLobby = () => {
@@ -896,7 +930,7 @@ export default function GanDengYan() {
                   roomId: simpleId,
                   players: [{
                       id: 0,
-                      name: nickname || "房主",
+                      name: nickname || savedNickname || "房主",
                       isAi: false,
                       hand: [],
                       cardsLeft: 0,
@@ -940,19 +974,22 @@ export default function GanDengYan() {
       }, 500);
   };
   
-  const joinRoom = () => {
-      if (joinRoomId.length !== 4) {
+  const joinRoom = (roomIdOverride?: string, nameOverride?: string) => {
+      const targetRoomId = roomIdOverride || joinRoomId;
+      const targetName = nameOverride || nickname || "玩家";
+
+      if (targetRoomId.length !== 4) {
           showMessage("请输入4位房间号", 1000);
           return;
       }
       setNetLogs([]);
-      addLog(`正在查找房间: ${joinRoomId}...`);
+      addLog(`正在查找房间: ${targetRoomId}...`);
       setIsConnecting(true);
       
       if (peer) { peer.destroy(); setPeer(null); }
       
       setTimeout(() => {
-          const fullId = APP_ID_PREFIX + joinRoomId;
+          const fullId = APP_ID_PREFIX + targetRoomId;
           const guestPeer = new Peer(undefined, {
               config: PEER_CONFIG,
               secure: true
@@ -978,7 +1015,7 @@ export default function GanDengYan() {
                  clearTimeout(timeoutId);
                  addLog("通道打开！发送加入请求...");
                  showMessage("已连接房主！", 1000);
-                 conn.send({ type: "PLAYER_JOIN", name: nickname || "玩家", peerId: id });
+                 conn.send({ type: "PLAYER_JOIN", name: targetName, peerId: id });
               });
               
               conn.on('data', (data: any) => {
@@ -1028,6 +1065,11 @@ export default function GanDengYan() {
       }, 500);
   };
   
+  // Expose joinRoom to useEffect via ref to avoid stale closures
+  useEffect(() => {
+      joinRoomRef.current = joinRoom;
+  }, [nickname, joinRoomId]); // Dependencies usually fine, but logic is inside function
+
   const copyInviteLink = () => {
       const url = `${window.location.protocol}//${window.location.host}${window.location.pathname}?room=${hostRoomId}`;
       navigator.clipboard.writeText(url).then(() => {
@@ -1106,7 +1148,7 @@ export default function GanDengYan() {
           const isHuman = i === 0;
           players.push({
             id: i,
-            name: isHuman ? "你" : `bot${i}`,
+            name: isHuman ? (savedNickname || nickname || "你") : `bot${i}`,
             isAi: !isHuman,
             hand: [],
             cardsLeft: 0,
@@ -1578,6 +1620,14 @@ export default function GanDengYan() {
           <>
           {lobbyStep === "MAIN" && (
             <div style={{ display: "flex", flexDirection: "column", gap: "20px", width: "100%", alignItems: "center" }}>
+               {savedNickname && (
+                   <div style={{ background: "rgba(0,0,0,0.4)", padding: "10px 20px", borderRadius: "20px", display: "flex", flexDirection: "column", alignItems: "center", marginBottom: "10px" }}>
+                       <div style={{ fontSize: "0.9rem", color: "#bdc3c7" }}>当前身份</div>
+                       <div style={{ fontSize: "1.2rem", fontWeight: "bold", color: "#fbc02d" }}>{savedNickname}</div>
+                       <button onClick={clearSavedNickname} style={{ marginTop: "5px", background: "transparent", border: "none", color: "#4fc3f7", fontSize: "0.8rem", cursor: "pointer", textDecoration: "underline" }}>切换账号</button>
+                   </div>
+               )}
+
                <button 
                  onClick={() => { audio.init(); setLobbyStep("SELECT_COUNT"); audio.playClick(); }}
                  style={{ padding: "15px 40px", fontSize: "1.5rem", background: "#fbc02d", border: "none", borderRadius: "30px", cursor: "pointer", fontWeight: "bold", boxShadow: "0 4px 0 #f57f17", width: "240px" }}
@@ -1585,7 +1635,16 @@ export default function GanDengYan() {
                  单机对战
                </button>
                <button 
-                 onClick={() => { audio.init(); setLobbyStep("NICKNAME"); audio.playClick(); }}
+                 onClick={() => { 
+                     audio.init(); 
+                     audio.playClick();
+                     if (savedNickname) {
+                         setNickname(savedNickname);
+                         setLobbyStep("MULTI_LOBBY");
+                     } else {
+                         setLobbyStep("NICKNAME"); 
+                     }
+                 }}
                  style={{ padding: "15px 40px", fontSize: "1.5rem", background: "#039be5", border: "none", borderRadius: "30px", cursor: "pointer", fontWeight: "bold", boxShadow: "0 4px 0 #0277bd", width: "240px", color: "white" }}
                >
                  多人联机
@@ -1639,9 +1698,11 @@ export default function GanDengYan() {
                     value={nickname} onChange={e => setNickname(e.target.value.slice(0, 8))}
                     style={{ padding: "10px", fontSize: "1.5rem", width: "200px", textAlign: "center", borderRadius: "5px", border: "none" }}
                   />
+                  <div style={{fontSize: "0.8rem", color: "#aaa"}}>设置后会自动记住</div>
                   <button 
                     onClick={() => { 
                         if(!nickname.trim()) { showMessage("请输入昵称", 1000); return; }
+                        saveNickname(nickname);
                         if (isAutoJoining) {
                             joinRoom();
                         } else {
@@ -1674,6 +1735,7 @@ export default function GanDengYan() {
 
           {lobbyStep === "MULTI_LOBBY" && (
               <div style={{ display: "flex", flexDirection: "column", gap: "15px", width: "100%", alignItems: "center" }}>
+                  <div style={{color: "#fff", marginBottom: "5px"}}>你好，{nickname}</div>
                   <button 
                     onClick={createRoom} 
                     disabled={isConnecting}
@@ -1688,7 +1750,7 @@ export default function GanDengYan() {
                   >
                       加入房间
                   </button>
-                  <button onClick={() => setLobbyStep("NICKNAME")} style={{ background: "transparent", border: "none", color: "#ccc", textDecoration: "underline" }}>返回</button>
+                  <button onClick={() => setLobbyStep("MAIN")} style={{ background: "transparent", border: "none", color: "#ccc", textDecoration: "underline" }}>返回</button>
                   
                   <div style={{ width: "100%", background: "rgba(0,0,0,0.8)", color: "#0f0", fontFamily: "monospace", fontSize: "10px", padding: "5px", borderRadius: "4px", height: "80px", overflowY: "auto", marginTop: "5px" }}>
                     {netLogs.length === 0 && <div style={{color: "#555"}}>网络日志...</div>}
@@ -1705,7 +1767,7 @@ export default function GanDengYan() {
                     style={{ padding: "10px", fontSize: "1.5rem", width: "150px", textAlign: "center", borderRadius: "5px", border: "none" }}
                   />
                   <button 
-                    onClick={joinRoom} 
+                    onClick={() => joinRoom()} 
                     disabled={isConnecting}
                     style={{ padding: "10px 30px", background: isConnecting ? "#88dadfb0" : "#26c6da", border: "none", borderRadius: "20px", fontSize: "1.2rem", cursor: isConnecting ? "not-allowed" : "pointer" }}
                   >
