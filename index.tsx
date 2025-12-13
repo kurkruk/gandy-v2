@@ -672,6 +672,39 @@ export default function GanDengYan() {
   const nextTurnRef = useRef<any>(null);
   const joinRoomRef = useRef<any>(null); // For auto-join
 
+  // --- WAKE LOCK LOGIC ---
+  const wakeLockRef = useRef<any>(null);
+
+  const requestWakeLock = useCallback(async () => {
+    try {
+      if ('wakeLock' in navigator) {
+        wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
+        addLog("屏幕常亮已开启");
+        
+        wakeLockRef.current.addEventListener('release', () => {
+          console.log('Wake Lock released');
+        });
+      }
+    } catch (err) {
+      console.error('Wake Lock error:', err);
+    }
+  }, []);
+
+  // Re-acquire lock when app comes back to foreground
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (wakeLockRef.current !== null && document.visibilityState === 'visible') {
+        requestWakeLock();
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (wakeLockRef.current) wakeLockRef.current.release();
+    };
+  }, [requestWakeLock]);
+
   useEffect(() => {
     connectionsRef.current = connections;
   }, [connections]);
@@ -902,6 +935,7 @@ export default function GanDengYan() {
   };
 
   const createRoom = () => {
+      requestWakeLock(); // Request screen keep awake
       addLog("正在创建房间...");
       if (peer) { peer.destroy(); setPeer(null); }
       setIsConnecting(true);
@@ -994,6 +1028,7 @@ export default function GanDengYan() {
   };
   
   const joinRoom = (roomIdOverride?: string, nameOverride?: string) => {
+      requestWakeLock(); // Request screen keep awake
       const targetRoomId = roomIdOverride || joinRoomId;
       const targetName = nameOverride || nickname || "玩家";
 
@@ -1132,6 +1167,7 @@ export default function GanDengYan() {
   }
 
   const startGame = (count: number, scoreOverride?: {[k:number]:number}) => {
+    requestWakeLock(); // Ensure wake lock for single player too
     audio.init();
     audio.playClick();
     const newDeck = shuffle(generateDeck());
@@ -1648,7 +1684,7 @@ export default function GanDengYan() {
                )}
 
                <button 
-                 onClick={() => { audio.init(); setLobbyStep("SELECT_COUNT"); audio.playClick(); }}
+                 onClick={() => { audio.init(); setLobbyStep("SELECT_COUNT"); audio.playClick(); requestWakeLock(); }}
                  style={{ padding: "15px 40px", fontSize: "1.5rem", background: "#fbc02d", border: "none", borderRadius: "30px", cursor: "pointer", fontWeight: "bold", boxShadow: "0 4px 0 #f57f17", width: "240px" }}
                >
                  单机对战
@@ -1660,6 +1696,7 @@ export default function GanDengYan() {
                      if (savedNickname) {
                          setNickname(savedNickname);
                          setLobbyStep("MULTI_LOBBY");
+                         requestWakeLock();
                      } else {
                          setLobbyStep("NICKNAME"); 
                      }
@@ -1726,6 +1763,7 @@ export default function GanDengYan() {
                             joinRoom();
                         } else {
                             setLobbyStep("MULTI_LOBBY"); 
+                            requestWakeLock();
                         }
                     }} 
                     disabled={isConnecting}
