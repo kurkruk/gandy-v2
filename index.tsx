@@ -660,6 +660,9 @@ export default function GanDengYan() {
   const [recoverData, setRecoverData] = useState<{roomId: string, state: GameState} | null>(null);
   const [hostOffline, setHostOffline] = useState(false); // Guest side flag
 
+  // Countdown Logic
+  const [countdown, setCountdown] = useState<number | null>(null);
+
   // Network State
   const [peer, setPeer] = useState<Peer | null>(null);
   const [myPeerId, setMyPeerId] = useState<string>("");
@@ -841,6 +844,7 @@ export default function GanDengYan() {
       setShowReport(false);
       setLoadingPlayerCount(null);
       setIsAutoJoining(false);
+      setCountdown(null);
   };
 
   const showMessage = useCallback((msg: string, duration: number = 0) => {
@@ -1332,60 +1336,6 @@ export default function GanDengYan() {
     dealAndPlay(players, newDeck, dealerIndex, scoresToKeep, historyToKeep);
   };
 
-  const calculateScores = useCallback((winnerIdx: number, players: Player[], bombs: number, oldScores: {[k:number]:number}) => {
-    const multiplier = Math.pow(2, bombs);
-    let totalWin = 0;
-    const currentScores = { ...oldScores };
-    const roundDeltas: {[k:number]:number} = {};
-
-    players.forEach(p => {
-      let change = 0;
-      if (p.id !== winnerIdx) {
-          let base = p.cardsLeft;
-          if (base === 1) base = 0; 
-          if (base === 5 && !p.hasPlayed) base = base * 2; 
-
-          const penalty = base * multiplier;
-          change = -penalty;
-          totalWin += penalty;
-      }
-      roundDeltas[p.id] = change;
-      currentScores[p.id] = (currentScores[p.id] || 0) + change;
-    });
-
-    roundDeltas[winnerIdx] = totalWin;
-    currentScores[winnerIdx] = (currentScores[winnerIdx] || 0) + totalWin;
-    
-    return { currentScores, roundDeltas };
-  }, []);
-
-  const handleWin = useCallback((winnerIdx: number, finalBombCount: number, currentPlayers: Player[], lastHand: PlayedHand) => {
-    audio.playWin();
-    const { currentScores, roundDeltas } = calculateScores(winnerIdx, currentPlayers, finalBombCount, state.scores);
-
-    setGameState(prev => ({ 
-      ...prev, 
-      status: "celebrating", 
-      players: currentPlayers, 
-      bombCount: finalBombCount, 
-      lastWinnerIndex: winnerIdx, 
-      tablePile: [...prev.tablePile, lastHand] 
-    }));
-    
-    // Clear recovery data on win to avoid restoring finished games
-    localStorage.removeItem(STORAGE_KEY_GAME_RECOVERY);
-    setRecoverData(null);
-
-    setTimeout(() => {
-      setGameState(prev => ({
-        ...prev,
-        status: "scoring",
-        scores: currentScores,
-        gameHistory: [...prev.gameHistory, roundDeltas]
-      }));
-    }, 4000);
-  }, [state.scores, calculateScores]);
-
   const handleDraw = useCallback(() => {
       audio.playDraw();
       const msg = "🚫 本局流产！下一局随机指定先手！";
@@ -1464,25 +1414,74 @@ export default function GanDengYan() {
     });
   }, [showMessage, handleDraw]);
 
+  // Handle Celebration Effect and Scores
+  useEffect(() => {
+      if (state.status === 'celebrating') {
+          audio.playWin();
+          // Clear recovery data on win to avoid restoring finished games
+          localStorage.removeItem(STORAGE_KEY_GAME_RECOVERY);
+          setRecoverData(null);
+          
+          const winnerIdx = state.lastWinnerIndex;
+          const bombs = state.bombCount;
+          const currentPlayers = state.players;
+          
+          // Calculate Scores
+          const multiplier = Math.pow(2, bombs);
+          let totalWin = 0;
+          const currentScores = { ...state.scores };
+          const roundDeltas: {[k:number]:number} = {};
+
+          currentPlayers.forEach(p => {
+              let change = 0;
+              if (p.id !== winnerIdx) {
+                  let base = p.cardsLeft;
+                  if (base === 1) base = 0; 
+                  if (base === 5 && !p.hasPlayed) base = base * 2; 
+
+                  const penalty = base * multiplier;
+                  change = -penalty;
+                  totalWin += penalty;
+              }
+              roundDeltas[p.id] = change;
+              currentScores[p.id] = (currentScores[p.id] || 0) + change;
+          });
+
+          roundDeltas[winnerIdx] = totalWin;
+          currentScores[winnerIdx] = (currentScores[winnerIdx] || 0) + totalWin;
+          
+          const timer = setTimeout(() => {
+             setGameState(prev => ({
+                 ...prev,
+                 status: "scoring",
+                 scores: currentScores,
+                 gameHistory: [...prev.gameHistory, roundDeltas]
+             }));
+          }, 3000); // 3 seconds celebration
+          
+          return () => clearTimeout(timer);
+      }
+  }, [state.status]);
+
   const playHand = useCallback((cards: Card[], analysis: any) => {
     audio.playCard();
+    setCountdown(null);
     
     setGameState(prev => {
         const playerIndex = prev.currentPlayerIndex;
         const newPlayers = [...prev.players];
         const player = { ...newPlayers[playerIndex] };
-        newPlayers[playerIndex] = player;
         
+        // Remove cards
         const cardIds = new Set(cards.map(c => c.id));
         player.hand = player.hand.filter(c => !cardIds.has(c.id));
         player.cardsLeft = player.hand.length;
         player.hasPlayed = true;
         player.lastAction = "PLAY";
+        newPlayers[playerIndex] = player;
 
         const isBomb = analysis.type === "BOMB" || analysis.type === "KING_BOMB";
         const newBombCount = prev.bombCount + (isBomb ? (analysis.type === "KING_BOMB" ? 1 : Math.max(1, analysis.bombLevel)) : 0);
-
-        if (isBomb) triggerBombToast(analysis.type === "KING_BOMB");
 
         const playedHand: PlayedHand = {
             playerId: playerIndex,
@@ -1494,12 +1493,18 @@ export default function GanDengYan() {
         };
 
         if (player.cardsLeft === 0) {
-            handleWin(playerIndex, newBombCount, newPlayers, playedHand);
-            return prev; 
+            // WINNER: Directly transition to celebrating, including the last hand in tablePile
+            return {
+                ...prev,
+                status: "celebrating",
+                players: newPlayers,
+                bombCount: newBombCount,
+                lastWinnerIndex: playerIndex,
+                tablePile: [...prev.tablePile, playedHand]
+            };
         }
 
         const nextIdx = (playerIndex + 1) % newPlayers.length;
-        
         return {
             ...prev,
             players: newPlayers,
@@ -1511,8 +1516,13 @@ export default function GanDengYan() {
             currentPlayerIndex: nextIdx
         };
     });
+    
+    // Handle Bomb Toast side effect
+    const isBomb = analysis.type === "BOMB" || analysis.type === "KING_BOMB";
+    if (isBomb) triggerBombToast(analysis.type === "KING_BOMB");
+    
     setSelectedCardIds([]);
-  }, [handleWin, triggerBombToast]);
+  }, [triggerBombToast]);
 
   useEffect(() => {
       playHandRef.current = playHand;
@@ -1548,42 +1558,128 @@ export default function GanDengYan() {
       }
   }, [state.status, state.isHost, broadcastState]);
 
-  useEffect(() => {
-    if (state.status !== 'playing') return;
-    const myId = state.myPlayerId || 0;
-    if (state.currentPlayerIndex !== myId) return;
+  const handleUserPlay = () => {
+    setCountdown(null);
+    const me = state.players[state.myPlayerId || 0];
+    const selectedCards = me.hand.filter(c => selectedCardIds.includes(c.id));
+    
+    const lastHand = state.tablePile.length > 0 ? state.tablePile[state.tablePile.length - 1] : null;
+    
+    const hintRank = lastHand && lastHand.type === 'STRAIGHT' ? lastHand.primaryRank + 1 : undefined;
+    const analysis = analyzeHand(selectedCards, hintRank);
 
-    return () => {
+    if (!analysis) { showMessage("牌型无效！", 1500); return; }
+
+    if (lastHand && !canBeat(analysis, lastHand)) { showMessage("打不过！需大一级。", 1500); return; }
+
+    if (state.isHost) {
+        playHand(selectedCards, analysis);
+    } else {
+        connections[0].send({ type: "ACTION_PLAY", cards: selectedCards, analysis });
+        setSelectedCardIds([]);
+    }
+  };
+
+  const handleUserPass = () => {
+    setCountdown(null);
+    if (state.tablePile.length === 0) { showMessage("你必须出牌，不能过！", 1500); return; }
+    
+    const willClearRound = state.passesInARow + 1 >= state.players.length - 1;
+    if (!willClearRound) {
+        audio.playPass();
+    }
+    
+    if (state.isHost) {
+        nextTurn(true);
+    } else {
+        connections[0].send({ type: "ACTION_PASS" });
+    }
+    setSelectedCardIds([]);
+  };
+
+  const handleAutoPlay = () => {
+      setCountdown(null);
+      const myId = state.myPlayerId || 0;
+      const me = state.players[myId];
+      
+      // 1. Try currently selected cards
+      if (selectedCardIds.length > 0) {
+          const selectedCards = me.hand.filter(c => selectedCardIds.includes(c.id));
+          const lastHand = state.tablePile.length > 0 ? state.tablePile[state.tablePile.length - 1] : null;
+          const hintRank = lastHand && lastHand.type === 'STRAIGHT' ? lastHand.primaryRank + 1 : undefined;
+          const analysis = analyzeHand(selectedCards, hintRank);
+          
+          if (analysis && (!lastHand || canBeat(analysis, lastHand))) {
+               if (state.isHost) playHand(selectedCards, analysis);
+               else connections[0].send({ type: "ACTION_PLAY", cards: selectedCards, analysis });
+               setSelectedCardIds([]);
+               return;
+          }
+      }
+      
+      // 2. Fallback to AI logic calculation
+      const lastHand = state.tablePile.length > 0 ? state.tablePile[state.tablePile.length - 1] : null;
+      const bestMove = calculateAiMove(me.hand, lastHand);
+      
+      if (bestMove) {
+          if (state.isHost) playHand(bestMove.cards, bestMove.analysis);
+          else connections[0].send({ type: "ACTION_PLAY", cards: bestMove.cards, analysis: bestMove.analysis });
+          setSelectedCardIds([]);
+      } else {
+          handleUserPass();
+      }
+  };
+
+  useEffect(() => {
+    if (state.status !== 'playing') {
+        setCountdown(null);
+        return;
+    }
+    const myId = state.myPlayerId || 0;
+    
+    // Always clean up previous countdown logic when index changes
+    if (state.currentPlayerIndex !== myId) {
+        setCountdown(null);
         if (autoPassTimeoutRef.current) {
             clearTimeout(autoPassTimeoutRef.current);
             autoPassTimeoutRef.current = null;
         }
-    };
-  }, [state.currentPlayerIndex, state.status, state.myPlayerId]);
+        return;
+    }
 
-  useEffect(() => {
-      if (state.status !== 'playing') return;
-      const myId = state.myPlayerId || 0;
-      if (state.currentPlayerIndex !== myId) return;
-      
-      const me = state.players[myId];
-      if (me.isAi) return;
+    const me = state.players[myId];
+    if (me.isAi) return; // AI handled elsewhere
 
-      const lastHand = state.tablePile.length > 0 ? state.tablePile[state.tablePile.length - 1] : null;
+    // It is my turn
+    
+    // Calculate possible move (Auto Select)
+    const lastHand = state.tablePile.length > 0 ? state.tablePile[state.tablePile.length - 1] : null;
+    const bestMove = calculateAiMove(me.hand, lastHand);
 
-      if (lastHand) {
-          const bestMove = calculateAiMove(me.hand, lastHand);
-
-          if (bestMove) {
-              setSelectedCardIds(bestMove.cards.map(c => c.id));
-          } else {
-              showMessage("无牌可出，自动过...", 1000);
-              autoPassTimeoutRef.current = window.setTimeout(() => {
-                  handleUserPass();
-              }, 1000);
-          }
-      }
+    if (bestMove) {
+        // Can Play
+        setSelectedCardIds(bestMove.cards.map(c => c.id));
+        setCountdown(10); // Start Timer
+    } else {
+        // Cannot Play
+        setCountdown(null); // No timer for forced pass (or handle via timeout below)
+        showMessage("无牌可出，自动过...", 1000);
+        autoPassTimeoutRef.current = window.setTimeout(() => {
+            handleUserPass();
+        }, 1000);
+    }
   }, [state.currentPlayerIndex, state.status, state.myPlayerId, state.tablePile]);
+
+  // Timer Tick Effect
+  useEffect(() => {
+      if (countdown === null) return;
+      if (countdown <= 0) {
+          handleAutoPlay();
+          return;
+      }
+      const timer = setTimeout(() => setCountdown(c => c !== null ? c - 1 : null), 1000);
+      return () => clearTimeout(timer);
+  }, [countdown]);
 
   useEffect(() => {
     if (state.status !== "playing") return;
@@ -1611,43 +1707,6 @@ export default function GanDengYan() {
       if (aiTimeoutRef.current) clearTimeout(aiTimeoutRef.current);
     };
   }, [state.currentPlayerIndex, state.status, state.players, state.tablePile, nextTurn, playHand, state.isHost, state.passesInARow]); 
-
-  const handleUserPlay = () => {
-    const me = state.players[state.myPlayerId || 0];
-    const selectedCards = me.hand.filter(c => selectedCardIds.includes(c.id));
-    
-    const lastHand = state.tablePile.length > 0 ? state.tablePile[state.tablePile.length - 1] : null;
-    
-    const hintRank = lastHand && lastHand.type === 'STRAIGHT' ? lastHand.primaryRank + 1 : undefined;
-    const analysis = analyzeHand(selectedCards, hintRank);
-
-    if (!analysis) { showMessage("牌型无效！", 1500); return; }
-
-    if (lastHand && !canBeat(analysis, lastHand)) { showMessage("打不过！需大一级。", 1500); return; }
-
-    if (state.isHost) {
-        playHand(selectedCards, analysis);
-    } else {
-        connections[0].send({ type: "ACTION_PLAY", cards: selectedCards, analysis });
-        setSelectedCardIds([]);
-    }
-  };
-
-  const handleUserPass = () => {
-    if (state.tablePile.length === 0) { showMessage("你必须出牌，不能过！", 1500); return; }
-    
-    const willClearRound = state.passesInARow + 1 >= state.players.length - 1;
-    if (!willClearRound) {
-        audio.playPass();
-    }
-    
-    if (state.isHost) {
-        nextTurn(true);
-    } else {
-        connections[0].send({ type: "ACTION_PASS" });
-    }
-    setSelectedCardIds([]);
-  };
 
   const toggleCardSelect = useCallback((id: string) => {
     if (state.currentPlayerIndex !== (state.myPlayerId || 0)) return;
@@ -1727,7 +1786,7 @@ export default function GanDengYan() {
       navigator.clipboard.writeText(text).then(() => {
           showMessage("已复制到剪贴板！", 1500);
       }).catch(err => {
-          console.error(err);
+          // console.error(err);
           showMessage("复制失败，请截图", 1500);
       });
   };
@@ -2209,6 +2268,21 @@ export default function GanDengYan() {
 
             {isMyTurn && state.status === 'playing' && (
               <>
+                {countdown !== null && (
+                    <div style={{
+                        width: "40px", height: "40px",
+                        background: countdown <= 3 ? "#d32f2f" : "#fbc02d",
+                        color: countdown <= 3 ? "white" : "black",
+                        borderRadius: "50%",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontWeight: "bold", fontSize: "1.2rem",
+                        border: "2px solid white",
+                        marginRight: "0px",
+                        boxShadow: "0 2px 4px rgba(0,0,0,0.3)"
+                    }}>
+                        {countdown}
+                    </div>
+                )}
                 <button 
                   onClick={handleUserPass}
                   disabled={state.tablePile.length === 0 && state.lastWinnerIndex === myId}
