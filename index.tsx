@@ -2285,7 +2285,7 @@ export default function GanDengYan() {
                         position: "absolute",
                         left: "50%",
                         transform: "translateX(-130px)",
-                        width: "40px", height: "40px",
+                        width: "36px", height: "36px",
                         background: countdown <= 3 ? "#d32f2f" : "#fbc02d",
                         color: countdown <= 3 ? "white" : "black",
                         borderRadius: "50%",
@@ -2321,7 +2321,7 @@ export default function GanDengYan() {
             <div className="dealer-badge" style={{ 
                 position: "absolute", 
                 left: "10px", 
-                width: "40px", height: "40px", fontSize: "20px", 
+                width: "36px", height: "36px", fontSize: "18px", 
                 border: "2px solid white", boxShadow: "0 2px 5px rgba(0,0,0,0.5)",
                 zIndex: 25,
                 background: '#ff9800', 
@@ -2346,7 +2346,7 @@ export default function GanDengYan() {
              top: "50%"
          }}>
             <div style={{ fontSize: "20px" }}>🂠</div>
-            <span style={{ fontSize: "1rem", whiteSpace: "nowrap", fontWeight: "bold", color: 'white' }}>剩余 {state.deck.length}</span>
+            <span style={{ fontSize: "16px", whiteSpace: "nowrap", fontWeight: "bold", color: 'white' }}>剩余 {state.deck.length}</span>
          </div>
       </div>
 
