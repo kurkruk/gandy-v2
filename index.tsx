@@ -2205,7 +2205,7 @@ export default function GanDengYan() {
           return (
             <div key={opp.id} className={`opponent-container ${posClass}`} style={{ opacity: isOffline ? 0.5 : (state.currentPlayerIndex === opp.id ? 1 : 0.7), transform: state.currentPlayerIndex === opp.id ? "scale(1.15)" : "scale(1)", zIndex: 10 }}>
               <div style={{ position: "relative" }}>
-                 <div style={{ width: "50px", height: "50px", borderRadius: "50%", background: isOffline ? "#555" : opp.color, display: "flex", alignItems: "center", justifyContent: "center", border: state.currentPlayerIndex === opp.id ? "3px solid #fbc02d" : "2px solid #fff", color: "white", fontSize: "28px", boxShadow: "0 2px 4px rgba(0,0,0,0.3)" }}>
+                 <div style={{ width: "38px", height: "38px", borderRadius: "50%", background: isOffline ? "#555" : opp.color, display: "flex", alignItems: "center", justifyContent: "center", border: state.currentPlayerIndex === opp.id ? "3px solid #fbc02d" : "2px solid #fff", color: "white", fontSize: "22px", boxShadow: "0 2px 4px rgba(0,0,0,0.3)" }}>
                     {isOffline ? "🚫" : avatar}
                  </div>
                  {isOppDealer && <div className="dealer-badge">庄</div>}
@@ -2261,7 +2261,7 @@ export default function GanDengYan() {
 
       <div style={{ height: "260px", display: "flex", flexDirection: "column", justifyContent: "flex-end", paddingBottom: "20px", background: "linear-gradient(to top, rgba(0,0,0,0.6), transparent)", zIndex: 20, position: "relative" }}>
          
-         <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "20px", marginBottom: "25px", position: "relative", width: "100%" }}>
+         <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "15px", marginBottom: "25px", position: "relative", width: "100%" }}>
             {user.lastAction === "PASS" && !isMyTurn && (
                  <div className="pass-bubble" style={{ position: "absolute", top: "-40px", left: "50%", transform: "translateX(-50%)" }}>不要</div>
             )}
@@ -2270,6 +2270,9 @@ export default function GanDengYan() {
               <>
                 {countdown !== null && (
                     <div style={{
+                        position: "absolute",
+                        left: "50%",
+                        transform: "translateX(-130px)",
                         width: "40px", height: "40px",
                         background: countdown <= 3 ? "#d32f2f" : "#fbc02d",
                         color: countdown <= 3 ? "white" : "black",
@@ -2277,8 +2280,8 @@ export default function GanDengYan() {
                         display: "flex", alignItems: "center", justifyContent: "center",
                         fontWeight: "bold", fontSize: "1.2rem",
                         border: "2px solid white",
-                        marginRight: "0px",
-                        boxShadow: "0 2px 4px rgba(0,0,0,0.3)"
+                        boxShadow: "0 2px 4px rgba(0,0,0,0.3)",
+                        zIndex: 30
                     }}>
                         {countdown}
                     </div>
@@ -2304,7 +2307,7 @@ export default function GanDengYan() {
                 <div className="dealer-badge" style={{ 
                     position: "absolute", 
                     top: "50%", 
-                    left: "20px", 
+                    left: "15px", 
                     transform: "translateY(-50%)",
                     width: "40px", height: "40px", fontSize: "20px", 
                     border: "2px solid white", boxShadow: "0 2px 5px rgba(0,0,0,0.5)",
