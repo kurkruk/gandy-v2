@@ -2307,7 +2307,7 @@ export default function GanDengYan() {
                 <div className="dealer-badge" style={{ 
                     position: "absolute", 
                     top: "50%", 
-                    left: "15px", 
+                    left: "5px", 
                     transform: "translateY(-50%)",
                     width: "40px", height: "40px", fontSize: "20px", 
                     border: "2px solid white", boxShadow: "0 2px 5px rgba(0,0,0,0.5)",
