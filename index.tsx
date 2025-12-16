@@ -2108,7 +2108,7 @@ export default function GanDengYan() {
              >✕</button>
 
              <div style={{ background: "#a06000", padding: "20px", textAlign: "center", color: "white", borderBottom: "1px solid #c98e1a" }}>
-                 <h2 style={{ margin: 0, fontSize: "2rem", fontWeight: "900" }}>本局分数结算</h2>
+                 <h2 style={{ margin: 0, fontSize: "2rem", fontWeight: "900" }}>第 {state.gameHistory.length} 局分数结算</h2>
              </div>
              
              <div style={{ padding: "20px", background: "#2c3e50", flex: 1 }}>
@@ -2261,7 +2261,7 @@ export default function GanDengYan() {
 
       <div style={{ height: "260px", display: "flex", flexDirection: "column", justifyContent: "flex-end", paddingBottom: "20px", background: "linear-gradient(to top, rgba(0,0,0,0.6), transparent)", zIndex: 20, position: "relative" }}>
          
-         <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "15px", marginBottom: "25px", position: "relative", width: "100%" }}>
+         <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "15px", position: "absolute", bottom: "170px", width: "100%", zIndex: 30 }}>
             {user.lastAction === "PASS" && !isMyTurn && (
                  <div className="pass-bubble" style={{ position: "absolute", top: "-40px", left: "50%", transform: "translateX(-50%)" }}>不要</div>
             )}
