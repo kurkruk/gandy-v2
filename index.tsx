@@ -2259,9 +2259,21 @@ export default function GanDengYan() {
           </div>
       )}
 
-      <div style={{ height: "260px", display: "flex", flexDirection: "column", justifyContent: "flex-end", paddingBottom: "20px", background: "linear-gradient(to top, rgba(0,0,0,0.6), transparent)", zIndex: 20, position: "relative" }}>
-         
-         <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "15px", position: "absolute", bottom: "170px", width: "100%", zIndex: 30 }}>
+      {/* FIXED CONTROL ROW - FULLY DECOUPLED */}
+      <div style={{ 
+          position: "absolute", 
+          bottom: "170px", // FIXED BOTTOM 
+          left: 0,
+          width: "100%", 
+          height: "40px", // FIXED HEIGHT - WILL NOT COLLAPSE
+          zIndex: 80, 
+          pointerEvents: "none",
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center"
+      }}>
+         {/* 1. BUTTON GROUP (CENTERED) */}
+         <div style={{ pointerEvents: "auto", display: "flex", justifyContent: "center", alignItems: "center", gap: "15px", position: "relative" }}>
             {user.lastAction === "PASS" && !isMyTurn && (
                  <div className="pass-bubble" style={{ position: "absolute", top: "-40px", left: "50%", transform: "translateX(-50%)" }}>不要</div>
             )}
@@ -2302,32 +2314,43 @@ export default function GanDengYan() {
                 </button>
               </>
             )}
-
-            {isDealer && (
-                <div className="dealer-badge" style={{ 
-                    position: "absolute", 
-                    top: "50%", 
-                    left: "5px", 
-                    transform: "translateY(-50%)",
-                    width: "40px", height: "40px", fontSize: "20px", 
-                    border: "2px solid white", boxShadow: "0 2px 5px rgba(0,0,0,0.5)",
-                    zIndex: 25
-                }}>庄</div>
-            )}
-
-             <div style={{ 
-                 position: "absolute", 
-                 top: 0, bottom: 0, margin: "auto 0", height: "fit-content",
-                 right: "10px", 
-                 display: "flex", alignItems: "center", gap: "8px", 
-                 background: "rgba(0,0,0,0.4)", padding: "5px 10px", borderRadius: "15px",
-                 border: "1px solid rgba(255,255,255,0.3)", transform: "scale(0.85)", transformOrigin: "right center"
-             }}>
-                <div style={{ fontSize: "20px" }}>🂠</div>
-                <span style={{ fontSize: "1rem", whiteSpace: "nowrap", fontWeight: "bold" }}>剩余 {state.deck.length}</span>
-             </div>
          </div>
 
+         {/* 2. DEALER BADGE (ABSOLUTE LEFT) - SEPARATE FROM BUTTONS */}
+         {isDealer && (
+            <div className="dealer-badge" style={{ 
+                position: "absolute", 
+                left: "10px", 
+                width: "40px", height: "40px", fontSize: "20px", 
+                border: "2px solid white", boxShadow: "0 2px 5px rgba(0,0,0,0.5)",
+                zIndex: 25,
+                background: '#ff9800', 
+                color: 'white',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: '50%',
+                top: "50%",
+                transform: "translateY(-50%)"
+            }}>庄</div>
+         )}
+
+         {/* 3. REMAINING COUNT (ABSOLUTE RIGHT) - SEPARATE FROM BUTTONS */}
+         <div style={{ 
+             position: "absolute", 
+             right: "10px", 
+             display: "flex", alignItems: "center", gap: "8px", 
+             background: "rgba(0,0,0,0.4)", padding: "5px 10px", borderRadius: "15px",
+             border: "1px solid rgba(255,255,255,0.3)", 
+             transform: "translateY(-50%)",
+             top: "50%"
+         }}>
+            <div style={{ fontSize: "20px" }}>🂠</div>
+            <span style={{ fontSize: "1rem", whiteSpace: "nowrap", fontWeight: "bold", color: 'white' }}>剩余 {state.deck.length}</span>
+         </div>
+      </div>
+
+      <div style={{ height: "260px", display: "flex", flexDirection: "column", justifyContent: "flex-end", paddingBottom: "13px", background: "linear-gradient(to top, rgba(0,0,0,0.6), transparent)", zIndex: 20, position: "relative" }}>
          <div style={{ display: "flex", justifyContent: "center", height: "130px", overflow: "visible" }}>
             <div style={{ display: "flex", marginLeft: "-50px" }}>
               {user.hand.map((card, i) => (
