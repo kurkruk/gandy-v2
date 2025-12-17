@@ -65,6 +65,7 @@ type NetworkAction =
   | { type: "ACTION_PASS" }
   | { type: "HEARTBEAT" }
   | { type: "SHOW_MESSAGE"; text: string; duration: number }
+  | { type: "CHAT_MESSAGE"; senderId: number; text: string }
   | { type: "START_GAME"; playerCount: number };
 
 const SUITS: Suit[] = ["spades", "hearts", "clubs", "diamonds"];
@@ -74,6 +75,17 @@ const BOT_AVATARS = ["🐼", "🐨", "🦊", "🐶", "🐱", "🐰", "🐹", "�
 const APP_ID_PREFIX = "gdy-game-v1-"; // Unique prefix to avoid collision on public PeerServer
 const STORAGE_KEY_NICKNAME = "gdy_saved_nickname"; // LocalStorage Key
 const STORAGE_KEY_GAME_RECOVERY = "gdy_recovery_v1"; // For Host crash recovery
+
+const CHAT_PHRASES = [
+    "嘿嘿嘿，想全关不？",
+    "大侠饶命，让我走一个！",
+    "哼！我生气了！给我来个顺子！",
+    "这么多二！你个小太二！",
+    "唉，这烂牌！我睡觉中...",
+    "阿弥陀佛，让我自摸！",
+    "尼加拉瓜，快把我夸！",
+    "你早上肯定踩狗屎了！"
+];
 
 // Tencent & Xiaomi STUN servers + Metered.ca TURN for global connectivity
 const PEER_CONFIG = {
@@ -132,24 +144,24 @@ class SoundManager {
   playDeal() { this.playTone(600, 'triangle', 0.05, 0.05); }
   playCard() { this.playTone(400, 'sine', 0.1, 0.1); }
   
+  speak(text: string, rate: number = 1.2) {
+      if (this.muted) return;
+      if (typeof window !== 'undefined' && window.speechSynthesis) {
+          window.speechSynthesis.cancel();
+          const ut = new SpeechSynthesisUtterance(text);
+          ut.lang = 'zh-CN';
+          ut.rate = rate;
+          const zhVoice = this.voices.find(v => v.lang.includes('zh-CN')) || this.voices.find(v => v.lang.includes('zh'));
+          if (zhVoice) ut.voice = zhVoice;
+          window.speechSynthesis.speak(ut);
+      }
+  }
+
   playPass() { 
     if (this.muted) return;
-    if (typeof window !== 'undefined' && window.speechSynthesis) {
-        window.speechSynthesis.cancel(); // Stop previous speech
-        const phrases = ["不要", "过", "要不起"];
-        const text = phrases[Math.floor(Math.random() * phrases.length)];
-        const ut = new SpeechSynthesisUtterance(text);
-        ut.lang = 'zh-CN';
-        ut.rate = 1.3;
-        
-        // Try to find a Chinese voice
-        const zhVoice = this.voices.find(v => v.lang.includes('zh-CN')) || this.voices.find(v => v.lang.includes('zh'));
-        if (zhVoice) ut.voice = zhVoice;
-
-        window.speechSynthesis.speak(ut);
-    } else {
-        this.playTone(200, 'sawtooth', 0.15, 0.05); 
-    }
+    const phrases = ["不要", "过", "要不起"];
+    const text = phrases[Math.floor(Math.random() * phrases.length)];
+    this.speak(text, 1.3);
   }
 
   playBomb() { 
@@ -655,6 +667,8 @@ export default function GanDengYan() {
   const [showReport, setShowReport] = useState(false);
   const [loadingPlayerCount, setLoadingPlayerCount] = useState<number | null>(null);
   const [isAutoJoining, setIsAutoJoining] = useState(false);
+  const [showChatModal, setShowChatModal] = useState(false);
+  const [chatBubbles, setChatBubbles] = useState<{[key:number]: string}>({});
   
   // Host Recovery Logic
   const [recoverData, setRecoverData] = useState<{roomId: string, state: GameState} | null>(null);
@@ -845,6 +859,8 @@ export default function GanDengYan() {
       setLoadingPlayerCount(null);
       setIsAutoJoining(false);
       setCountdown(null);
+      setChatBubbles({});
+      setShowChatModal(false);
   };
 
   const showMessage = useCallback((msg: string, duration: number = 0) => {
@@ -860,6 +876,35 @@ export default function GanDengYan() {
     audio.playBomb();
     setTimeout(() => setBombToast(null), 2000);
   }, []);
+
+  // --- CHAT LOGIC ---
+  const handleChat = (text: string) => {
+      const myId = state.myPlayerId || 0;
+      setChatBubbles(prev => ({...prev, [myId]: text}));
+      audio.speak(text);
+      setShowChatModal(false);
+      
+      // Auto clear
+      setTimeout(() => {
+          setChatBubbles(prev => {
+              const next = {...prev};
+              delete next[myId];
+              return next;
+          });
+      }, 3000);
+
+      if (state.isHost) {
+          broadcastMessageInternal(myId, text);
+      } else {
+          connections[0].send({ type: "CHAT_MESSAGE", senderId: myId, text });
+      }
+  };
+
+  const broadcastMessageInternal = (senderId: number, text: string) => {
+      connectionsRef.current.forEach(conn => {
+         if (conn.open) conn.send({ type: "CHAT_MESSAGE", senderId, text });
+      });
+  };
 
   // --- NETWORK LOGIC ---
 
@@ -915,6 +960,25 @@ export default function GanDengYan() {
       }
       if (data.type === "SHOW_MESSAGE") {
           showMessage(data.text, data.duration);
+          return;
+      }
+      if (data.type === "CHAT_MESSAGE") {
+          const myId = state.myPlayerId || 0;
+          if (data.senderId !== myId) {
+             setChatBubbles(prev => ({...prev, [data.senderId]: data.text}));
+             audio.speak(data.text);
+             setTimeout(() => {
+                  setChatBubbles(prev => {
+                      const next = {...prev};
+                      delete next[data.senderId];
+                      return next;
+                  });
+              }, 3000);
+          }
+          if (state.isHost) {
+              // Re-broadcast to others if host received it from a guest
+              broadcastMessageInternal(data.senderId, data.text);
+          }
           return;
       }
       if (data.type === "HEARTBEAT") {
@@ -1174,6 +1238,21 @@ export default function GanDengYan() {
                  }
                  if (data.type === "SHOW_MESSAGE") {
                      showMessage(data.text, data.duration);
+                 }
+                 if (data.type === "CHAT_MESSAGE") {
+                      const myId = state.myPlayerId || 0;
+                      if (data.senderId !== myId) {
+                         setChatBubbles(prev => ({...prev, [data.senderId]: data.text}));
+                         audio.speak(data.text);
+                         setTimeout(() => {
+                              setChatBubbles(prev => {
+                                  const next = {...prev};
+                                  delete next[data.senderId];
+                                  return next;
+                              });
+                          }, 3000);
+                      }
+                      return;
                  }
                  if (data.type === "HEARTBEAT") {
                      return; 
@@ -2191,9 +2270,40 @@ export default function GanDengYan() {
       </div>
 
       <div style={{ position: "absolute", top: "10px", right: "10px", zIndex: 50, display: "flex", gap: "10px" }}>
+        <button onClick={() => setShowChatModal(true)} style={{ background: "rgba(0,0,0,0.4)", color: "white", border: "2px solid white", borderRadius: "50%", width: "40px", height: "40px", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: "20px" }}>💬</button>
         <button onClick={toggleMute} style={{ background: "rgba(0,0,0,0.4)", color: "white", border: "2px solid white", borderRadius: "50%", width: "40px", height: "40px", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: "16px" }}>{muted ? "🔇" : "🔊"}</button>
         <button onClick={exitToLobby} style={{ background: "rgba(0,0,0,0.4)", color: "white", border: "1px solid white", borderRadius: "20px", padding: "5px 15px", cursor: "pointer", height: "40px", fontWeight: "bold" }}>退出</button>
       </div>
+
+      {showChatModal && (
+          <div className="full-screen-overlay" style={{ zIndex: 200, justifyContent: "flex-end", background: "rgba(0,0,0,0.6)" }} onClick={() => setShowChatModal(false)}>
+              <div style={{ background: "#f0f0f0", width: "100%", borderTopLeftRadius: "20px", borderTopRightRadius: "20px", padding: "20px", maxHeight: "60vh", overflowY: "auto", animation: "slideInBottom 0.2s" }} onClick={e => e.stopPropagation()}>
+                  <div style={{ textAlign: "center", color: "#333", fontWeight: "bold", marginBottom: "15px", fontSize: "1.1rem" }}>快捷语音</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                      {CHAT_PHRASES.map((phrase, idx) => (
+                          <button 
+                            key={idx} 
+                            onClick={() => handleChat(phrase)}
+                            style={{ 
+                                padding: "12px 10px", 
+                                background: "#fff", 
+                                border: "1px solid #ccc", 
+                                borderRadius: "8px", 
+                                fontSize: "0.9rem", 
+                                color: "#333", 
+                                textAlign: "left",
+                                cursor: "pointer",
+                                boxShadow: "0 1px 2px rgba(0,0,0,0.05)"
+                            }}
+                          >
+                              {phrase}
+                          </button>
+                      ))}
+                  </div>
+                  <button onClick={() => setShowChatModal(false)} style={{ width: "100%", padding: "15px", marginTop: "15px", border: "none", background: "transparent", color: "#999" }}>关闭</button>
+              </div>
+          </div>
+      )}
 
       <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: "260px", pointerEvents: "none" }}>
         {opponents.map((opp) => {
@@ -2201,6 +2311,7 @@ export default function GanDengYan() {
           const avatar = BOT_AVATARS[(opp.id - 1) % BOT_AVATARS.length] || "👤";
           const isOppDealer = state.dealerId === opp.id;
           const isOffline = opp.online === false;
+          const chatText = chatBubbles[opp.id];
 
           return (
             <div key={opp.id} className={`opponent-container ${posClass}`} style={{ opacity: isOffline ? 0.5 : (state.currentPlayerIndex === opp.id ? 1 : 0.7), transform: state.currentPlayerIndex === opp.id ? "scale(1.15)" : "scale(1)", zIndex: 10 }}>
@@ -2209,7 +2320,8 @@ export default function GanDengYan() {
                     {isOffline ? "🚫" : avatar}
                  </div>
                  {isOppDealer && <div className="dealer-badge">庄</div>}
-                 {opp.lastAction === "PASS" && <div className="pass-bubble">不要</div>}
+                 {chatText && <div className="chat-bubble">{chatText}</div>}
+                 {opp.lastAction === "PASS" && !chatText && <div className="pass-bubble">不要</div>}
                  {isOffline && <div style={{ position: "absolute", top: "-15px", left: "50%", transform: "translateX(-50%)", background: "#c0392b", color: "white", fontSize: "10px", padding: "2px 5px", borderRadius: "4px", whiteSpace: "nowrap", border: "1px solid white" }}>离线</div>}
               </div>
               <div style={{ background: "#fff", color: "#d32f2f", padding: "2px 8px", borderRadius: "10px", marginTop: "-10px", fontWeight: "bold", fontSize: "1.2rem", zIndex: 2, position: "relative", boxShadow: "0 1px 2px black" }}>{opp.cardsLeft}</div>
@@ -2274,8 +2386,13 @@ export default function GanDengYan() {
       }}>
          {/* 1. BUTTON GROUP (CENTERED) */}
          <div style={{ pointerEvents: "auto", display: "flex", justifyContent: "center", alignItems: "center", gap: "15px", position: "relative" }}>
-            {user.lastAction === "PASS" && !isMyTurn && (
+            {user.lastAction === "PASS" && !isMyTurn && !chatBubbles[myId] && (
                  <div className="pass-bubble" style={{ position: "absolute", top: "-40px", left: "50%", transform: "translateX(-50%)" }}>不要</div>
+            )}
+            
+            {/* My Chat Bubble */}
+            {chatBubbles[myId] && (
+                 <div className="chat-bubble" style={{ top: "-80px", left: "50%", transform: "translateX(-50%)" }}>{chatBubbles[myId]}</div>
             )}
 
             {isMyTurn && state.status === 'playing' && (
