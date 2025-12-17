@@ -2286,8 +2286,8 @@ export default function GanDengYan() {
                         left: "50%",
                         transform: "translateX(-130px)",
                         width: "36px", height: "36px",
-                        background: countdown <= 3 ? "#d32f2f" : "#fbc02d",
-                        color: countdown <= 3 ? "white" : "black",
+                        background: countdown <= 3 ? "#d32f2f" : "#ffffff",
+                        color: countdown <= 3 ? "white" : "#333",
                         borderRadius: "50%",
                         display: "flex", alignItems: "center", justifyContent: "center",
                         fontWeight: "bold", fontSize: "1.2rem",
@@ -2301,14 +2301,14 @@ export default function GanDengYan() {
                 <button 
                   onClick={handleUserPass}
                   disabled={state.tablePile.length === 0 && state.lastWinnerIndex === myId}
-                  style={{ padding: "10px 20px", background: "#e0e0e0", border: "none", borderRadius: "20px", fontWeight: "bold", fontSize: "1rem", cursor: "pointer", boxShadow: "0 2px 0 #9e9e9e" }}
+                  style={{ padding: "10px 20px", background: "#cfd8dc", border: "none", borderRadius: "20px", fontWeight: "bold", fontSize: "1rem", cursor: "pointer", boxShadow: "0 2px 0 #90a4ae", color: "#37474f" }}
                 >
                   不要
                 </button>
                 <button 
                   onClick={handleUserPlay} 
                   disabled={selectedCardIds.length === 0}
-                  style={{ padding: "10px 20px", background: "#fbc02d", border: "none", borderRadius: "20px", fontWeight: "bold", fontSize: "1rem", opacity: selectedCardIds.length === 0 ? 0.5 : 1, cursor: "pointer", boxShadow: "0 2px 0 #f57f17" }}
+                  style={{ padding: "10px 20px", background: "#29b6f6", border: "none", borderRadius: "20px", fontWeight: "bold", fontSize: "1rem", opacity: selectedCardIds.length === 0 ? 0.5 : 1, cursor: "pointer", boxShadow: "0 2px 0 #0288d1", color: "#fff" }}
                 >
                   出牌
                 </button>
@@ -2324,7 +2324,7 @@ export default function GanDengYan() {
                 width: "36px", height: "36px", fontSize: "18px", 
                 border: "2px solid white", boxShadow: "0 2px 5px rgba(0,0,0,0.5)",
                 zIndex: 25,
-                background: '#ff9800', 
+                background: '#ff5252', 
                 color: 'white',
                 display: 'flex',
                 alignItems: 'center',
