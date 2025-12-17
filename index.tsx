@@ -2346,7 +2346,7 @@ export default function GanDengYan() {
              top: "50%"
          }}>
             <div style={{ fontSize: "16px" }}>🂠</div>
-            <span style={{ fontSize: "1rem", whiteSpace: "nowrap", fontWeight: "normal", color: 'white' }}>剩余 {state.deck.length}</span>
+            <span style={{ fontSize: "0.8rem", whiteSpace: "nowrap", fontWeight: "bold", color: 'white' }}>剩余 {state.deck.length}</span>
          </div>
       </div>
 
