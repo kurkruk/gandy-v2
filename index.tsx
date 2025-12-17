@@ -2108,14 +2108,14 @@ export default function GanDengYan() {
              >✕</button>
 
              <div style={{ background: "#a06000", padding: "20px", textAlign: "center", color: "white", borderBottom: "1px solid #c98e1a" }}>
-                 <h2 style={{ margin: 0, fontSize: "2rem", fontWeight: "900" }}>第 {state.gameHistory.length} 局分数结算</h2>
+                 <h2 style={{ margin: 0, fontSize: "1.8rem", fontWeight: "900" }}>第 {state.gameHistory.length} 局分数结算</h2>
              </div>
              
              <div style={{ padding: "20px", background: "#2c3e50", flex: 1 }}>
                <div style={{ display: "grid", gridTemplateColumns: "1fr 2.5fr 50px 50px", gap: "10px", color: "#95a5a6", fontSize: "1rem", marginBottom: "15px", paddingBottom: "10px", borderBottom: "1px solid #34495e", fontWeight: "bold" }}>
                   <div style={{ textAlign: "left" }}>玩家</div>
                   <div style={{ textAlign: "right" }}>详情</div>
-                  <div style={{ textAlign: "right" }}>变动</div>
+                  <div style={{ textAlign: "right" }}>本局</div>
                   <div style={{ textAlign: "right" }}>总分</div>
                </div>
                
