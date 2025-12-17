@@ -2286,7 +2286,7 @@ export default function GanDengYan() {
                         left: "50%",
                         transform: "translateX(-130px)",
                         width: "36px", height: "36px",
-                        background: countdown <= 3 ? "#d32f2f" : "#ffffff",
+                        background: countdown <= 3 ? "#d32f2f" : "#fcc603",
                         color: countdown <= 3 ? "white" : "#333",
                         borderRadius: "50%",
                         display: "flex", alignItems: "center", justifyContent: "center",
