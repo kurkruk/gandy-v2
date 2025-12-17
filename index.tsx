@@ -2270,7 +2270,6 @@ export default function GanDengYan() {
       </div>
 
       <div style={{ position: "absolute", top: "10px", right: "10px", zIndex: 50, display: "flex", gap: "10px" }}>
-        <button onClick={() => setShowChatModal(true)} style={{ background: "rgba(0,0,0,0.4)", color: "white", border: "2px solid white", borderRadius: "50%", width: "40px", height: "40px", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: "20px" }}>💬</button>
         <button onClick={toggleMute} style={{ background: "rgba(0,0,0,0.4)", color: "white", border: "2px solid white", borderRadius: "50%", width: "40px", height: "40px", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: "16px" }}>{muted ? "🔇" : "🔊"}</button>
         <button onClick={exitToLobby} style={{ background: "rgba(0,0,0,0.4)", color: "white", border: "1px solid white", borderRadius: "20px", padding: "5px 15px", cursor: "pointer", height: "40px", fontWeight: "bold" }}>退出</button>
       </div>
@@ -2291,9 +2290,12 @@ export default function GanDengYan() {
                                 borderRadius: "8px", 
                                 fontSize: "0.9rem", 
                                 color: "#333", 
-                                textAlign: "left",
+                                textAlign: "left", 
                                 cursor: "pointer",
-                                boxShadow: "0 1px 2px rgba(0,0,0,0.05)"
+                                boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+                                whiteSpace: "nowrap",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis"
                             }}
                           >
                               {phrase}
@@ -2312,6 +2314,21 @@ export default function GanDengYan() {
           const isOppDealer = state.dealerId === opp.id;
           const isOffline = opp.online === false;
           const chatText = chatBubbles[opp.id];
+          
+          const isTopRow = posClass.includes("top");
+          const isLeftSide = posClass.includes("left") && !isTopRow;
+          const isRightSide = posClass.includes("right") && !isTopRow;
+
+          let bubbleStyle: React.CSSProperties = { position: "absolute", top: "-50px" };
+          
+          if (isLeftSide) {
+              bubbleStyle = { ...bubbleStyle, left: "0", right: "auto", transform: "none", borderRadius: "15px 15px 15px 0" };
+          } else if (isRightSide) {
+              bubbleStyle = { ...bubbleStyle, right: "0", left: "auto", transform: "none", borderRadius: "15px 15px 0 15px" };
+          } else {
+              // Top or defaults
+              bubbleStyle = { ...bubbleStyle, left: "50%", transform: "translateX(-50%)", borderRadius: "15px" };
+          }
 
           return (
             <div key={opp.id} className={`opponent-container ${posClass}`} style={{ opacity: isOffline ? 0.5 : (state.currentPlayerIndex === opp.id ? 1 : 0.7), transform: state.currentPlayerIndex === opp.id ? "scale(1.15)" : "scale(1)", zIndex: 10 }}>
@@ -2320,7 +2337,7 @@ export default function GanDengYan() {
                     {isOffline ? "🚫" : avatar}
                  </div>
                  {isOppDealer && <div className="dealer-badge">庄</div>}
-                 {chatText && <div className="chat-bubble">{chatText}</div>}
+                 {chatText && <div className="chat-bubble" style={bubbleStyle}>{chatText}</div>}
                  {opp.lastAction === "PASS" && !chatText && <div className="pass-bubble">不要</div>}
                  {isOffline && <div style={{ position: "absolute", top: "-15px", left: "50%", transform: "translateX(-50%)", background: "#c0392b", color: "white", fontSize: "10px", padding: "2px 5px", borderRadius: "4px", whiteSpace: "nowrap", border: "1px solid white" }}>离线</div>}
               </div>
@@ -2332,9 +2349,33 @@ export default function GanDengYan() {
       </div>
 
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
-        <div style={{ display: "flex", marginLeft: "-49px", transform: "scale(1.2) translateY(73px)" }}>
+        
+        {/* DECK INFO / BACKGROUND - REPLACES THE "EMPTY" BOX */}
+        {/* Position matched exactly to pile: scale(1.2) translateY(73px) */}
+        <div style={{ 
+            position: "absolute", 
+            transform: "scale(1.2) translateY(73px)", 
+            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+            opacity: 0.5, 
+            pointerEvents: "none", 
+            zIndex: 0, // Behind played cards
+            width: "70px", 
+            height: "98px",
+            border: "2px dashed rgba(255,255,255,0.3)",
+            borderRadius: "6px",
+            color: "white"
+        }}>
+            <div style={{ fontSize: "32px", lineHeight: 1 }}>🂠</div>
+            <div style={{ fontSize: "12px", fontWeight: "bold", marginTop: "2px", textShadow: "0 1px 2px black" }}>
+                剩{state.deck.length}
+            </div>
+        </div>
+
+        {/* PLAYED CARDS PILE */}
+        <div style={{ display: "flex", marginLeft: "-49px", transform: "scale(1.2) translateY(73px)", zIndex: 1 }}>
           {state.tablePile.length === 0 ? (
-             <div style={{ marginLeft: "49px", opacity: 0.3, border: "2px dashed #fff", width: "70px", height: "98px", borderRadius: "6px", display: "flex", alignItems: "center", justifyContent: "center" }}>空</div>
+             // Keep spacing correct even if empty
+             <div style={{ marginLeft: "49px", width: "70px", height: "98px" }} />
           ) : (
              state.tablePile[state.tablePile.length - 1].cards.map((c, i) => (
                <div key={c.id} className={getAnimClass(state.tablePile[state.tablePile.length - 1].playerId)} style={{ marginLeft: i === 0 ? "49px" : "-49px", zIndex: i }}>
@@ -2347,10 +2388,35 @@ export default function GanDengYan() {
           )}
         </div>
         
-        <div style={{ position: "absolute", bottom: "-17px", background: "rgba(0,0,0,0.6)", padding: "8px 20px", borderRadius: "20px", border: "1px solid rgba(255,255,255,0.2)", zIndex: 40 }}>
+        {/* BOMB COUNT DISPLAY - HIDDEN WHEN CHATTING */}
+        <div style={{ 
+            position: "absolute", 
+            bottom: "-17px", 
+            background: "rgba(0,0,0,0.6)", 
+            padding: "8px 20px", 
+            borderRadius: "20px", 
+            border: "1px solid rgba(255,255,255,0.2)", 
+            zIndex: 40,
+            opacity: chatBubbles[myId] ? 0 : 1, 
+            transition: "opacity 0.2s"
+        }}>
            <span style={{ marginRight: "15px", color: "#e57373" }}>炸弹数: {state.bombCount}</span>
            <span style={{ color: "#fbc02d", fontWeight: "bold" }}>倍数: x{Math.pow(2, state.bombCount)}</span>
         </div>
+        
+        {/* MY CHAT BUBBLE - OVERLAYS BOMB COUNT */}
+        {chatBubbles[myId] && (
+             <div className="chat-bubble" style={{ 
+                 position: "absolute", 
+                 bottom: "-17px", 
+                 left: "50%", 
+                 transform: "translateX(-50%)", 
+                 zIndex: 42,
+                 whiteSpace: "nowrap"
+             }}>
+                {chatBubbles[myId]}
+             </div>
+        )}
         
         <div style={{ position: "absolute", bottom: "-58px", background: "rgba(255,255,255,0.9)", color: "#000", padding: "8px 16px", borderRadius: "4px", fontWeight: "bold", display: lastMessage ? "block" : "none", maxWidth: "90%", textAlign: "center", boxShadow: "0 2px 10px rgba(0,0,0,0.3)", zIndex: 40 }}>
           {lastMessage}
@@ -2390,11 +2456,6 @@ export default function GanDengYan() {
                  <div className="pass-bubble" style={{ position: "absolute", top: "-40px", left: "50%", transform: "translateX(-50%)" }}>不要</div>
             )}
             
-            {/* My Chat Bubble */}
-            {chatBubbles[myId] && (
-                 <div className="chat-bubble" style={{ top: "-80px", left: "50%", transform: "translateX(-50%)" }}>{chatBubbles[myId]}</div>
-            )}
-
             {isMyTurn && state.status === 'playing' && (
               <>
                 {countdown !== null && (
@@ -2452,19 +2513,27 @@ export default function GanDengYan() {
             }}>庄</div>
          )}
 
-         {/* 3. REMAINING COUNT (ABSOLUTE RIGHT) - SEPARATE FROM BUTTONS */}
-         <div style={{ 
+         {/* 3. CHAT BUTTON (ABSOLUTE RIGHT) */}
+         <button onClick={() => setShowChatModal(true)} style={{ 
              position: "absolute", 
-             right: "7px", 
-             display: "flex", alignItems: "center", gap: "8px", 
-             background: "rgba(0,0,0,0.4)", padding: "5px 10px", borderRadius: "15px",
-             border: "1px solid rgba(255,255,255,0.3)", 
+             right: "15px", 
+             top: "50%",
              transform: "translateY(-50%)",
-             top: "50%"
-         }}>
-            <div style={{ fontSize: "16px" }}>🂠</div>
-            <span style={{ fontSize: "0.8rem", whiteSpace: "nowrap", fontWeight: "bold", color: 'white' }}>剩余 {state.deck.length}</span>
-         </div>
+             background: "rgba(0,0,0,0.5)",
+             color: "white", 
+             border: "2px solid white", 
+             borderRadius: "50%", 
+             width: "44px", 
+             height: "44px", 
+             display: "flex", 
+             alignItems: "center", 
+             justifyContent: "center", 
+             cursor: "pointer", 
+             fontSize: "22px",
+             boxShadow: "0 2px 5px rgba(0,0,0,0.3)",
+             zIndex: 90,
+             pointerEvents: "auto"
+         }}>💬</button>
       </div>
 
       <div style={{ height: "260px", display: "flex", flexDirection: "column", justifyContent: "flex-end", paddingBottom: "13px", background: "linear-gradient(to top, rgba(0,0,0,0.6), transparent)", zIndex: 20, position: "relative" }}>
