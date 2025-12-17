@@ -1374,7 +1374,7 @@ export default function GanDengYan() {
             const lastPlay = currentState.tablePile[currentState.tablePile.length - 1];
             if (lastPlay) roundWinner = lastPlay.playerId;
             
-            showMessage(`${currentState.players[roundWinner].name} 赢了本轮！正在补牌...`, 2000);
+            showMessage(`${currentState.players[roundWinner].name} 赢了本轮！正在摸牌...`, 2000);
             nextPlayers.forEach(p => p.lastAction = null);
 
             if (nextDeck.length > 0) {
@@ -2320,7 +2320,7 @@ export default function GanDengYan() {
          {isDealer && (
             <div className="dealer-badge" style={{ 
                 position: "absolute", 
-                left: "10px", 
+                left: "7px", 
                 width: "36px", height: "36px", fontSize: "18px", 
                 border: "2px solid white", boxShadow: "0 2px 5px rgba(0,0,0,0.5)",
                 zIndex: 25,
@@ -2338,15 +2338,15 @@ export default function GanDengYan() {
          {/* 3. REMAINING COUNT (ABSOLUTE RIGHT) - SEPARATE FROM BUTTONS */}
          <div style={{ 
              position: "absolute", 
-             right: "10px", 
+             right: "7px", 
              display: "flex", alignItems: "center", gap: "8px", 
              background: "rgba(0,0,0,0.4)", padding: "5px 10px", borderRadius: "15px",
              border: "1px solid rgba(255,255,255,0.3)", 
              transform: "translateY(-50%)",
              top: "50%"
          }}>
-            <div style={{ fontSize: "20px" }}>🂠</div>
-            <span style={{ fontSize: "16px", whiteSpace: "nowrap", fontWeight: "bold", color: 'white' }}>剩余 {state.deck.length}</span>
+            <div style={{ fontSize: "16px" }}>🂠</div>
+            <span style={{ fontSize: "1rem", whiteSpace: "nowrap", fontWeight: "normal", color: 'white' }}>剩余 {state.deck.length}</span>
          </div>
       </div>
 
