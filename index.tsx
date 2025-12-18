@@ -79,9 +79,9 @@ const STORAGE_KEY_GAME_RECOVERY = "gdy_recovery_v1"; // For Host crash recovery
 const CHAT_PHRASES = [
     "嘿嘿嘿，想全关不？",
     "大侠饶命，让我走一个！",
-    "哼！我生气了！给我来个顺子！",
+    "哼！我生气了！摸个顺子！",
     "这么多二！你个小太二！",
-    "唉，这烂牌！我睡觉中...",
+    "唉，这烂牌！困觉去。",
     "阿弥陀佛，让我自摸！",
     "尼加拉瓜，快把我夸！",
     "你早上肯定踩狗屎了！"
