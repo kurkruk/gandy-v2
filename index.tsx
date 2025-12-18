@@ -474,8 +474,13 @@ const calculateAiMove = (hand: Card[], lastHand: PlayedHand | null): { cards: Ca
     let analysis: any = null;
 
     if (!lastHand) {
-        move = findStraight(3, null, true);
-        if (!move) move = findStraightWithWild(3, null, true);
+        // Optimized Straight selection: Try longest possible first (from hand size down to 3)
+        for (let l = Math.min(normals.length + (hasJoker ? 1 : 0), 12); l >= 3; l--) {
+            move = findStraight(l, null, true);
+            if (move) break;
+            move = findStraightWithWild(l, null, true);
+            if (move) break;
+        }
         
         if (!move) move = findPair(null, true);
         if (!move) move = findPairWithWild(null, true);
@@ -483,8 +488,13 @@ const calculateAiMove = (hand: Card[], lastHand: PlayedHand | null): { cards: Ca
         if (!move) move = findSingle(null, true);
 
         if (!move) {
-             move = findStraight(3, null);
-             if (!move) move = findStraightWithWild(3, null);
+             // Second pass for higher cards if no low cards available
+             for (let l = Math.min(normals.length + (hasJoker ? 1 : 0), 12); l >= 3; l--) {
+                move = findStraight(l, null);
+                if (move) break;
+                move = findStraightWithWild(l, null);
+                if (move) break;
+             }
              
              if (!move) move = findPair(null);
              if (!move) move = findPairWithWild(null);
@@ -504,6 +514,7 @@ const calculateAiMove = (hand: Card[], lastHand: PlayedHand | null): { cards: Ca
             if (!move) move = findPairWithWild(lastHand.primaryRank);
         }
         else if (lastHand.type === "STRAIGHT") {
+            // Must match exact length when beating a straight
             move = findStraight(lastHand.length, lastHand.primaryRank);
             if (!move) move = findStraightWithWild(lastHand.length, lastHand.primaryRank);
         }
@@ -762,7 +773,6 @@ export default function GanDengYan() {
           
           if (stored) {
                // If we have a nickname and a room, join immediately
-               // Use a timeout to ensure state is settled or refs are ready
                setTimeout(() => {
                    if (joinRoomRef.current) joinRoomRef.current(roomParam, stored);
                }, 500);
@@ -954,7 +964,6 @@ export default function GanDengYan() {
       if (data.type === "SYNC_STATE") {
           setState(data.state);
           setIsConnecting(false);
-          // If we receive state, it means host is back
           setHostOffline(false);
           return;
       }
@@ -976,7 +985,6 @@ export default function GanDengYan() {
               }, 3000);
           }
           if (state.isHost) {
-              // Re-broadcast to others if host received it from a guest
               broadcastMessageInternal(data.senderId, data.text);
           }
           return;
@@ -990,7 +998,6 @@ export default function GanDengYan() {
              const existingPlayer = prev.players.find(p => p.name === data.name);
              if (existingPlayer) {
                  addLog(`玩家 ${data.name} 重连成功`);
-                 // Mark as online on reconnect
                  const updatedPlayers = prev.players.map(p => 
                      p.name === data.name ? { ...p, peerId: data.peerId, online: true } : p
                  );
@@ -1012,7 +1019,7 @@ export default function GanDengYan() {
                  role: 'guest',
                  color: BOT_COLORS[(newPId - 1) % BOT_COLORS.length],
                  peerId: data.peerId,
-                 online: true // Default online
+                 online: true
              };
              const nextState = { ...prev, players: [...prev.players, newPlayer] };
              if (conn.open) conn.send({ type: "SYNC_STATE", state: nextState });
@@ -1053,7 +1060,7 @@ export default function GanDengYan() {
   };
 
   const createRoom = (restoreId?: string, restoreState?: GameState) => {
-      requestWakeLock(); // Request screen keep awake
+      requestWakeLock();
       if (restoreState) {
           addLog("正在恢复房间...");
       } else {
@@ -1081,9 +1088,8 @@ export default function GanDengYan() {
               
               if (restoreState) {
                   addLog("牌局状态已恢复！等待重连...");
-                  // Ensure current player is updated to match self peerId just in case
                   const updatedPlayers = restoreState.players.map(p => 
-                      p.role === 'host' ? { ...p, peerId: id, online: true } : { ...p, online: false } // Mark others offline until they reconnect
+                      p.role === 'host' ? { ...p, peerId: id, online: true } : { ...p, online: false }
                   );
                   setState({
                       ...restoreState,
@@ -1135,22 +1141,18 @@ export default function GanDengYan() {
               });
               conn.on('error', (e) => addLog(`Conn Err: ${e}`));
               
-              // NEW: Handle disconnection
               conn.on('close', () => {
                   addLog(`连接断开: ${conn.peer.slice(-4)}`);
                   setConnections(prev => prev.filter(c => c.peer !== conn.peer));
                   
                   setGameState(prev => {
-                      // If in waiting room, remove player completely
                       if (prev.status === 'waiting') {
                           const pName = prev.players.find(p => p.peerId === conn.peer)?.name || "玩家";
                           showMessage(`${pName} 已退出`, 2000);
                           const remaining = prev.players.filter(p => p.peerId !== conn.peer);
-                          // Re-index
                           const reIndexed = remaining.map((p, idx) => ({ ...p, id: idx }));
                           return { ...prev, players: reIndexed };
                       } 
-                      // If in game, mark as offline but keep in seat
                       else {
                           const target = prev.players.find(p => p.peerId === conn.peer);
                           if (target) {
@@ -1180,7 +1182,7 @@ export default function GanDengYan() {
   };
   
   const joinRoom = (roomIdOverride?: string, nameOverride?: string) => {
-      requestWakeLock(); // Request screen keep awake
+      requestWakeLock();
       const targetRoomId = roomIdOverride || joinRoomId;
       const targetName = nameOverride || nickname || "玩家";
 
@@ -1189,7 +1191,6 @@ export default function GanDengYan() {
           return;
       }
       setNetLogs([]);
-      // Only show log if explicit join, not silent reconnect
       if (!hostOffline) addLog(`正在查找房间: ${targetRoomId}...`);
       setIsConnecting(true);
       
@@ -1218,14 +1219,14 @@ export default function GanDengYan() {
                       }
                       setIsConnecting(false);
                   }
-              }, 10000); // Reduced timeout for faster retry cycles
+              }, 10000);
 
               conn.on('open', () => {
                  clearTimeout(timeoutId);
                  addLog("通道打开！");
                  showMessage("已连接房主！", 1000);
                  conn.send({ type: "PLAYER_JOIN", name: targetName, peerId: id });
-                 setHostOffline(false); // Host is back!
+                 setHostOffline(false);
               });
               
               conn.on('data', (data: any) => {
@@ -1259,24 +1260,19 @@ export default function GanDengYan() {
                  }
               });
               
-              // Handle Host Disconnect
               conn.on('close', () => {
                   clearTimeout(timeoutId);
-                  
-                  // Only exit to lobby if we haven't started playing or are just in lobby
-                  // If we are playing, enter 'frozen' state
                   setState(current => {
                       if (current.status === 'playing' || current.status === 'celebrating' || current.status === 'scoring') {
                           addLog("⚠️ 与房主断开连接，尝试重连...");
                           setHostOffline(true);
-                          return current; // Keep game state visible
+                          return current;
                       } else {
                           addLog("连接已断开");
                           showMessage("连接断开", 3000);
                           return { ...current, status: 'lobby' };
                       }
                   });
-                  
                   setIsConnecting(false);
               });
               
@@ -1291,7 +1287,6 @@ export default function GanDengYan() {
           
           guestPeer.on('error', (e) => {
               if ((e.type === 'network' || e.type === 'peer-unavailable') && connectionsRef.current.length > 0) return;
-              // Don't log spam during reconnect loop
               if (!hostOffline) addLog(`Guest Error: ${e.type}`);
               setIsConnecting(false);
               if (e.type === 'peer-unavailable') {
@@ -1303,7 +1298,6 @@ export default function GanDengYan() {
       }, 500);
   };
   
-  // Expose joinRoom to useEffect via ref to avoid stale closures
   useEffect(() => {
       joinRoomRef.current = joinRoom;
   }, [nickname, joinRoomId, hostOffline]); 
@@ -1322,7 +1316,7 @@ export default function GanDengYan() {
           const cardsToTake = idx === dealerIdx ? 6 : 5;
           p.hand = sortCards(deck.splice(0, cardsToTake));
           p.cardsLeft = p.hand.length;
-          p.online = true; // Ensure marked online at start
+          p.online = true;
         });
 
         setGameState((prev) => ({
@@ -1352,7 +1346,7 @@ export default function GanDengYan() {
   }
 
   const startGame = (count: number, scoreOverride?: {[k:number]:number}) => {
-    requestWakeLock(); // Ensure wake lock for single player too
+    requestWakeLock();
     audio.init();
     audio.playClick();
     const newDeck = shuffle(generateDeck());
@@ -1370,7 +1364,7 @@ export default function GanDengYan() {
             cardsLeft: 0,
             hasPlayed: false,
             lastAction: null,
-            online: p.online !== false // Keep existing status or default true
+            online: p.online !== false
         }));
         
         if (state.status === "scoring" || state.status === "celebrating" || state.status === "playing") {
@@ -1424,7 +1418,6 @@ export default function GanDengYan() {
       const zeroDeltas: {[k:number]:number} = {};
       state.players.forEach(p => zeroDeltas[p.id] = 0);
       
-      // Clear recovery on draw
       localStorage.removeItem(STORAGE_KEY_GAME_RECOVERY);
       setRecoverData(null);
 
@@ -1493,11 +1486,9 @@ export default function GanDengYan() {
     });
   }, [showMessage, handleDraw]);
 
-  // Handle Celebration Effect and Scores
   useEffect(() => {
       if (state.status === 'celebrating') {
           audio.playWin();
-          // Clear recovery data on win to avoid restoring finished games
           localStorage.removeItem(STORAGE_KEY_GAME_RECOVERY);
           setRecoverData(null);
           
@@ -1505,7 +1496,6 @@ export default function GanDengYan() {
           const bombs = state.bombCount;
           const currentPlayers = state.players;
           
-          // Calculate Scores
           const multiplier = Math.pow(2, bombs);
           let totalWin = 0;
           const currentScores = { ...state.scores };
@@ -1536,7 +1526,7 @@ export default function GanDengYan() {
                  scores: currentScores,
                  gameHistory: [...prev.gameHistory, roundDeltas]
              }));
-          }, 3000); // 3 seconds celebration
+          }, 3000);
           
           return () => clearTimeout(timer);
       }
@@ -1551,7 +1541,6 @@ export default function GanDengYan() {
         const newPlayers = [...prev.players];
         const player = { ...newPlayers[playerIndex] };
         
-        // Remove cards
         const cardIds = new Set(cards.map(c => c.id));
         player.hand = player.hand.filter(c => !cardIds.has(c.id));
         player.cardsLeft = player.hand.length;
@@ -1572,7 +1561,6 @@ export default function GanDengYan() {
         };
 
         if (player.cardsLeft === 0) {
-            // WINNER: Directly transition to celebrating, including the last hand in tablePile
             return {
                 ...prev,
                 status: "celebrating",
@@ -1596,7 +1584,6 @@ export default function GanDengYan() {
         };
     });
     
-    // Handle Bomb Toast side effect
     const isBomb = analysis.type === "BOMB" || analysis.type === "KING_BOMB";
     if (isBomb) triggerBombToast(analysis.type === "KING_BOMB");
     
@@ -1681,7 +1668,6 @@ export default function GanDengYan() {
       const myId = state.myPlayerId || 0;
       const me = state.players[myId];
       
-      // 1. Try currently selected cards
       if (selectedCardIds.length > 0) {
           const selectedCards = me.hand.filter(c => selectedCardIds.includes(c.id));
           const lastHand = state.tablePile.length > 0 ? state.tablePile[state.tablePile.length - 1] : null;
@@ -1696,7 +1682,6 @@ export default function GanDengYan() {
           }
       }
       
-      // 2. Fallback to AI logic calculation
       const lastHand = state.tablePile.length > 0 ? state.tablePile[state.tablePile.length - 1] : null;
       const bestMove = calculateAiMove(me.hand, lastHand);
       
@@ -1716,7 +1701,6 @@ export default function GanDengYan() {
     }
     const myId = state.myPlayerId || 0;
     
-    // Always clean up previous countdown logic when index changes
     if (state.currentPlayerIndex !== myId) {
         setCountdown(null);
         if (autoPassTimeoutRef.current) {
@@ -1727,21 +1711,16 @@ export default function GanDengYan() {
     }
 
     const me = state.players[myId];
-    if (me.isAi) return; // AI handled elsewhere
+    if (me.isAi) return;
 
-    // It is my turn
-    
-    // Calculate possible move (Auto Select)
     const lastHand = state.tablePile.length > 0 ? state.tablePile[state.tablePile.length - 1] : null;
     const bestMove = calculateAiMove(me.hand, lastHand);
 
     if (bestMove) {
-        // Can Play
         setSelectedCardIds(bestMove.cards.map(c => c.id));
-        setCountdown(10); // Start Timer
+        setCountdown(10);
     } else {
-        // Cannot Play
-        setCountdown(null); // No timer for forced pass (or handle via timeout below)
+        setCountdown(null);
         showMessage("无牌可出，自动过...", 1000);
         autoPassTimeoutRef.current = window.setTimeout(() => {
             handleUserPass();
@@ -1749,7 +1728,6 @@ export default function GanDengYan() {
     }
   }, [state.currentPlayerIndex, state.status, state.myPlayerId, state.tablePile]);
 
-  // Timer Tick Effect
   useEffect(() => {
       if (countdown === null) return;
       if (countdown <= 0) {
@@ -1798,24 +1776,18 @@ export default function GanDengYan() {
     const visualId = (id - myId + totalPlayers) % totalPlayers;
     
     if (totalPlayers === 2) return "pos-top";
-    
-    if (totalPlayers === 3) {
-        return visualId === 1 ? "pos-right" : "pos-left";
-    }
-    
+    if (totalPlayers === 3) return visualId === 1 ? "pos-right" : "pos-left";
     if (totalPlayers === 4) {
         if (visualId === 1) return "pos-right";
         if (visualId === 2) return "pos-top";
         return "pos-left";
     }
-    
     if (totalPlayers === 5) {
         if (visualId === 1) return "pos-right-low";
         if (visualId === 2) return "pos-right-high";
         if (visualId === 3) return "pos-left-high";
         return "pos-left-low";
     }
-    
     if (totalPlayers === 6) {
         if (visualId === 1) return "pos-right-low";
         if (visualId === 2) return "pos-right-high";
@@ -1823,7 +1795,6 @@ export default function GanDengYan() {
         if (visualId === 4) return "pos-left-high";
         return "pos-left-low";
     }
-    
     if (totalPlayers === 7) {
         if (visualId === 1) return "pos-right-low";
         if (visualId === 2) return "pos-right-high";
@@ -1838,7 +1809,6 @@ export default function GanDengYan() {
   const getAnimClass = (pid: number) => {
       if (pid === myId) return "anim-slide-bottom";
       const pos = getOpponentPositionStyle(pid, state.players.length);
-      
       switch (pos) {
           case "pos-top-left": return "anim-slide-top-left";
           case "pos-top-right": return "anim-slide-top-right";
@@ -1861,11 +1831,9 @@ export default function GanDengYan() {
          text += `${p.id + 1}. ${p.name}: ${total > 0 ? '+' : ''}${total} (${history})\n`;
       });
       text += "------------------\n总局数: " + state.gameHistory.length;
-      
       navigator.clipboard.writeText(text).then(() => {
           showMessage("已复制到剪贴板！", 1500);
       }).catch(err => {
-          // console.error(err);
           showMessage("复制失败，请截图", 1500);
       });
   };
@@ -1881,7 +1849,6 @@ export default function GanDengYan() {
         <h2 style={{ color: "#fff", opacity: 0.6, fontSize: "1.2rem", marginTop: "-10px", fontWeight: "normal" }}>BONJOY 特别定制版</h2>
         
         <div style={{ background: "rgba(0,0,0,0.3)", padding: "30px", borderRadius: "10px", display: "flex", flexDirection: "column", gap: "10px", alignItems: "center", minWidth: "300px", maxWidth: "450px", overflow: "hidden" }}>
-          
           {state.status === "waiting" ? (
              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "15px", width: "100%" }}>
                 <h3 style={{ margin: 0, color: "#fff", opacity: 0.8 }}>房间号</h3>
@@ -1892,14 +1859,10 @@ export default function GanDengYan() {
                     <button 
                         onClick={copyInviteLink} 
                         style={{ padding: "8px 15px", background: "#0288d1", border: "none", borderRadius: "5px", fontSize: "0.9rem", color: "white", cursor: "pointer", marginTop: "-5px" }}
-                    >
-                        🔗 复制邀请链接
-                    </button>
+                    >🔗 复制邀请链接</button>
                 )}
                 {isConnecting && <div style={{color: "#fbc02d", fontWeight: "bold"}}>正在连接中...</div>}
-
                 <div style={{ color: "#ddd", marginTop: "10px" }}>已加入玩家 ({state.players.length}人):</div>
-                
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "10px", width: "100%", maxHeight: "200px", overflowY: "auto" }}>
                     {state.players.map(p => (
                         <div key={p.id} style={{ background: "rgba(255,255,255,0.2)", padding: "10px 5px", borderRadius: "8px", display: "flex", flexDirection: "column", alignItems: "center", gap: "5px" }}>
@@ -1909,14 +1872,12 @@ export default function GanDengYan() {
                         </div>
                     ))}
                 </div>
-
                 {state.isHost ? (
                     <button onClick={() => startGame(0)} style={{ padding: "10px 30px", background: "#4caf50", border: "none", borderRadius: "20px", fontSize: "1.2rem", color: "white", marginTop: "10px" }}>开始游戏</button>
                 ) : (
                     <div style={{ color: "#aaa" }}>等待房主开始...</div>
                 )}
                 <button onClick={exitToLobby} style={{ color: "#ccc", background: "none", border: "none", textDecoration: "underline" }}>退出</button>
-                
                 <div style={{ width: "100%", background: "rgba(0,0,0,0.8)", color: "#0f0", fontFamily: "monospace", fontSize: "10px", padding: "5px", borderRadius: "4px", height: "80px", overflowY: "auto", marginTop: "10px" }}>
                     {netLogs.map((log, i) => <div key={i}>{log}</div>)}
                 </div>
@@ -1932,45 +1893,25 @@ export default function GanDengYan() {
                        <button onClick={clearSavedNickname} style={{ marginTop: "5px", background: "transparent", border: "none", color: "#4fc3f7", fontSize: "0.8rem", cursor: "pointer", textDecoration: "underline" }}>切换账号</button>
                    </div>
                )}
-
                {recoverData && (
                   <button
-                    onClick={() => {
-                        audio.init();
-                        audio.playClick();
-                        createRoom(recoverData.roomId, recoverData.state);
-                    }}
+                    onClick={() => { audio.init(); audio.playClick(); createRoom(recoverData.roomId, recoverData.state); }}
                     style={{ padding: "10px 30px", fontSize: "1.2rem", background: "#66bb6a", border: "2px solid #43a047", borderRadius: "25px", cursor: "pointer", fontWeight: "bold", width: "240px", color: "white", marginBottom: "10px", animation: "popIn 0.5s" }}
-                  >
-                    ♻️ 恢复房间 [{recoverData.roomId}]
-                  </button>
+                  >♻️ 恢复房间 [{recoverData.roomId}]</button>
                )}
-
                <button 
                  onClick={() => { audio.init(); setLobbyStep("SELECT_COUNT"); audio.playClick(); requestWakeLock(); }}
                  style={{ padding: "15px 40px", fontSize: "1.5rem", background: "#fbc02d", border: "none", borderRadius: "30px", cursor: "pointer", fontWeight: "bold", boxShadow: "0 4px 0 #f57f17", width: "240px" }}
-               >
-                 单机对战
-               </button>
+               >单机对战</button>
                <button 
                  onClick={() => { 
-                     audio.init(); 
-                     audio.playClick();
-                     if (savedNickname) {
-                         setNickname(savedNickname);
-                         setLobbyStep("MULTI_LOBBY");
-                         requestWakeLock();
-                     } else {
-                         setLobbyStep("NICKNAME"); 
-                     }
+                     audio.init(); audio.playClick();
+                     if (savedNickname) { setNickname(savedNickname); setLobbyStep("MULTI_LOBBY"); requestWakeLock(); } else { setLobbyStep("NICKNAME"); }
                  }}
                  style={{ padding: "15px 40px", fontSize: "1.5rem", background: "#039be5", border: "none", borderRadius: "30px", cursor: "pointer", fontWeight: "bold", boxShadow: "0 4px 0 #0277bd", width: "240px", color: "white" }}
-               >
-                 多人联机
-               </button>
+               >多人联机</button>
             </div>
           )}
-
           {lobbyStep === "SELECT_COUNT" && (
              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "20px" }}>
                 <h3 style={{ margin: 0 }}>选择游戏人数</h3>
@@ -1980,121 +1921,49 @@ export default function GanDengYan() {
                      return (
                        <button
                          key={num}
-                         onClick={() => {
-                             if (loadingPlayerCount !== null) return;
-                             audio.playClick();
-                             setLoadingPlayerCount(num);
-                             setTimeout(() => startGame(num), 300); 
-                         }}
-                         style={{ 
-                             padding: "15px 20px", 
-                             fontSize: "1.2rem", 
-                             background: isLoading ? "#388e3c" : "#4caf50", 
-                             border: isLoading ? "2px solid rgba(255,255,255,0.3)" : "none", 
-                             borderRadius: "10px", 
-                             cursor: "pointer", 
-                             fontWeight: "bold", 
-                             color: "white",
-                             transform: isLoading ? "translateY(4px)" : "translateY(0)",
-                             boxShadow: isLoading ? "none" : "0 4px 0 #2e7d32",
-                             transition: "all 0.1s"
-                         }}
-                       >
-                         {isLoading ? "..." : `${num}人`}
-                       </button>
+                         onClick={() => { if (loadingPlayerCount !== null) return; audio.playClick(); setLoadingPlayerCount(num); setTimeout(() => startGame(num), 300); }}
+                         style={{ padding: "15px 20px", fontSize: "1.2rem", background: isLoading ? "#388e3c" : "#4caf50", border: isLoading ? "2px solid rgba(255,255,255,0.3)" : "none", borderRadius: "10px", cursor: "pointer", fontWeight: "bold", color: "white", transform: isLoading ? "translateY(4px)" : "translateY(0)", boxShadow: isLoading ? "none" : "0 4px 0 #2e7d32", transition: "all 0.1s" }}
+                       >{isLoading ? "..." : `${num}人`}</button>
                      );
                    })}
                 </div>
                 <button onClick={() => setLobbyStep("MAIN")} style={{ background: "transparent", border: "none", color: "#ccc", marginTop: "10px", textDecoration: "underline" }}>返回</button>
              </div>
           )}
-
           {lobbyStep === "NICKNAME" && (
               <div style={{ display: "flex", flexDirection: "column", gap: "15px", alignItems: "center" }}>
                   <h3 style={{ margin: 0 }}>请输入昵称</h3>
-                  <input 
-                    type="text" placeholder="你的名字" 
-                    value={nickname} onChange={e => setNickname(e.target.value.slice(0, 8))}
-                    style={{ padding: "10px", fontSize: "1.5rem", width: "200px", textAlign: "center", borderRadius: "5px", border: "none" }}
-                  />
+                  <input type="text" placeholder="你的名字" value={nickname} onChange={e => setNickname(e.target.value.slice(0, 8))}
+                    style={{ padding: "10px", fontSize: "1.5rem", width: "200px", textAlign: "center", borderRadius: "5px", border: "none" }} />
                   <div style={{fontSize: "0.8rem", color: "#aaa"}}>设置后会自动记住</div>
-                  <button 
-                    onClick={() => { 
-                        if(!nickname.trim()) { showMessage("请输入昵称", 1000); return; }
-                        saveNickname(nickname);
-                        if (isAutoJoining) {
-                            joinRoom();
-                        } else {
-                            setLobbyStep("MULTI_LOBBY"); 
-                            requestWakeLock();
-                        }
-                    }} 
+                  <button onClick={() => { if(!nickname.trim()) { showMessage("请输入昵称", 1000); return; } saveNickname(nickname); if (isAutoJoining) { joinRoom(); } else { setLobbyStep("MULTI_LOBBY"); requestWakeLock(); } }} 
                     disabled={isConnecting}
-                    style={{ 
-                        padding: "10px 30px", 
-                        background: isConnecting ? "#ccc" : "#fbc02d", 
-                        border: "none", 
-                        borderRadius: "20px", 
-                        fontSize: "1.2rem", 
-                        fontWeight: "bold",
-                        cursor: isConnecting ? "not-allowed" : "pointer" 
-                    }}
-                  >
-                    {isConnecting ? "连接中..." : (isAutoJoining ? "加入房间" : "下一步")}
-                  </button>
-                  {!isConnecting && (
-                    <button onClick={() => setLobbyStep("MAIN")} style={{ background: "transparent", border: "none", color: "#ccc", textDecoration: "underline" }}>返回</button>
-                  )}
-                  
+                    style={{ padding: "10px 30px", background: isConnecting ? "#ccc" : "#fbc02d", border: "none", borderRadius: "20px", fontSize: "1.2rem", fontWeight: "bold", cursor: isConnecting ? "not-allowed" : "pointer" }}
+                  >{isConnecting ? "连接中..." : (isAutoJoining ? "加入房间" : "下一步")}</button>
+                  {!isConnecting && <button onClick={() => setLobbyStep("MAIN")} style={{ background: "transparent", border: "none", color: "#ccc", textDecoration: "underline" }}>返回</button>}
                   <div style={{ width: "100%", background: "rgba(0,0,0,0.8)", color: "#0f0", fontFamily: "monospace", fontSize: "10px", padding: "5px", borderRadius: "4px", height: "80px", overflowY: "auto", marginTop: "5px" }}>
                     {netLogs.length === 0 && <div style={{color: "#555"}}>网络日志...</div>}
                     {netLogs.map((log, i) => <div key={i}>{log}</div>)}
                   </div>
               </div>
           )}
-
           {lobbyStep === "MULTI_LOBBY" && (
               <div style={{ display: "flex", flexDirection: "column", gap: "15px", width: "100%", alignItems: "center" }}>
                   <div style={{color: "#fff", marginBottom: "5px"}}>你好，{nickname}</div>
-                  <button 
-                    onClick={() => createRoom()} 
-                    disabled={isConnecting}
-                    style={{ padding: "15px 40px", fontSize: "1.3rem", background: isConnecting ? "#8bc34a88" : "#8bc34a", border: "none", borderRadius: "30px", width: "240px", cursor: isConnecting ? "wait" : "pointer" }}
-                  >
-                      {isConnecting ? "创建中..." : "创建房间"}
-                  </button>
-                  <button 
-                    onClick={() => setLobbyStep("JOIN_ROOM")} 
-                    disabled={isConnecting}
-                    style={{ padding: "15px 40px", fontSize: "1.3rem", background: "#ff7043", border: "none", borderRadius: "30px", width: "240px" }}
-                  >
-                      加入房间
-                  </button>
+                  <button onClick={() => createRoom()} disabled={isConnecting} style={{ padding: "15px 40px", fontSize: "1.3rem", background: isConnecting ? "#8bc34a88" : "#8bc34a", border: "none", borderRadius: "30px", width: "240px", cursor: isConnecting ? "wait" : "pointer" }}>{isConnecting ? "创建中..." : "创建房间"}</button>
+                  <button onClick={() => setLobbyStep("JOIN_ROOM")} disabled={isConnecting} style={{ padding: "15px 40px", fontSize: "1.3rem", background: "#ff7043", border: "none", borderRadius: "30px", width: "240px" }}>加入房间</button>
                   <button onClick={() => setLobbyStep("MAIN")} style={{ background: "transparent", border: "none", color: "#ccc", textDecoration: "underline" }}>返回</button>
-                  
                   <div style={{ width: "100%", background: "rgba(0,0,0,0.8)", color: "#0f0", fontFamily: "monospace", fontSize: "10px", padding: "5px", borderRadius: "4px", height: "80px", overflowY: "auto", marginTop: "5px" }}>
                     {netLogs.length === 0 && <div style={{color: "#555"}}>网络日志...</div>}
                     {netLogs.map((log, i) => <div key={i}>{log}</div>)}
                   </div>
               </div>
           )}
-
           {lobbyStep === "JOIN_ROOM" && (
               <div style={{ display: "flex", flexDirection: "column", gap: "15px", alignItems: "center" }}>
-                  <input 
-                    type="number" placeholder="输入4位房间号" 
-                    value={joinRoomId} onChange={e => setJoinRoomId(e.target.value)}
-                    style={{ padding: "10px", fontSize: "1.5rem", width: "150px", textAlign: "center", borderRadius: "5px", border: "none" }}
-                  />
-                  <button 
-                    onClick={() => joinRoom()} 
-                    disabled={isConnecting}
-                    style={{ padding: "10px 30px", background: isConnecting ? "#88dadfb0" : "#26c6da", border: "none", borderRadius: "20px", fontSize: "1.2rem", cursor: isConnecting ? "not-allowed" : "pointer" }}
-                  >
-                      {isConnecting ? "连接中..." : "进入"}
-                  </button>
+                  <input type="number" placeholder="输入4位房间号" value={joinRoomId} onChange={e => setJoinRoomId(e.target.value)} style={{ padding: "10px", fontSize: "1.5rem", width: "150px", textAlign: "center", borderRadius: "5px", border: "none" }} />
+                  <button onClick={() => joinRoom()} disabled={isConnecting} style={{ padding: "10px 30px", background: isConnecting ? "#88dadfb0" : "#26c6da", border: "none", borderRadius: "20px", fontSize: "1.2rem", cursor: isConnecting ? "not-allowed" : "pointer" }}>{isConnecting ? "连接中..." : "进入"}</button>
                   <button onClick={() => setLobbyStep("MULTI_LOBBY")} style={{ background: "transparent", border: "none", color: "#ccc", textDecoration: "underline" }}>返回</button>
-                  
                   <div style={{ width: "100%", background: "rgba(0,0,0,0.8)", color: "#0f0", fontFamily: "monospace", fontSize: "10px", padding: "5px", borderRadius: "4px", height: "80px", overflowY: "auto", marginTop: "5px" }}>
                     {netLogs.length === 0 && <div style={{color: "#555"}}>网络日志...</div>}
                     {netLogs.map((log, i) => <div key={i}>{log}</div>)}
@@ -2116,7 +1985,6 @@ export default function GanDengYan() {
                    <h2 style={{ margin: 0, color: "#fbc02d" }}>📊 战绩报表</h2>
                    <button onClick={() => setShowReport(false)} style={{ background: "none", border: "none", color: "white", fontSize: "24px", cursor: "pointer" }}>✕</button>
                </div>
-               
                <div style={{ overflow: "auto", flex: 1, minHeight: "150px" }}>
                    <table style={{ width: "100%", borderCollapse: "collapse", color: "white", fontSize: "0.9rem" }}>
                        <thead>
@@ -2124,9 +1992,7 @@ export default function GanDengYan() {
                                <th style={{ padding: "10px", textAlign: "left", background: "#34495e", position: "sticky", top: 0, left: 0, zIndex: 10, minWidth: "100px", borderRight: "2px solid #555" }}>玩家</th>
                                <th style={{ padding: "10px", textAlign: "right", background: "#34495e", position: "sticky", top: 0, zIndex: 5, color: "#fbc02d", borderRight: "1px solid #555" }}>累计</th>
                                {state.gameHistory.map((_, i) => (
-                                   <th key={i} style={{ padding: "10px", textAlign: "right", minWidth: "60px", background: "#34495e", color: "white", border: "1px solid #555", position: "sticky", top: 0, zIndex: 5 }}>
-                                       R{i+1}
-                                   </th>
+                                   <th key={i} style={{ padding: "10px", textAlign: "right", minWidth: "60px", background: "#34495e", color: "white", border: "1px solid #555", position: "sticky", top: 0, zIndex: 5 }}>R{i+1}</th>
                                ))}
                            </tr>
                        </thead>
@@ -2136,20 +2002,12 @@ export default function GanDengYan() {
                                const totalColor = total > 0 ? "#fbc02d" : (total < 0 ? "#ff5252" : "#ffffff");
                                return (
                                    <tr key={p.id} style={{ borderBottom: "1px solid #444", background: pIdx % 2 === 0 ? "rgba(0,0,0,0.2)" : "transparent" }}>
-                                       <td style={{ padding: "10px", position: "sticky", left: 0, background: pIdx % 2 === 0 ? "#263544" : "#2c3e50", zIndex: 2, borderRight: "2px solid #555", fontWeight: "bold", textAlign: "left" }}>
-                                           {p.name}
-                                       </td>
-                                       <td style={{ padding: "10px", textAlign: "right", fontWeight: "900", color: totalColor, borderRight: "1px solid #555", fontSize: "1.1rem" }}>
-                                           {total > 0 ? "+" : ""}{total}
-                                       </td>
+                                       <td style={{ padding: "10px", position: "sticky", left: 0, background: pIdx % 2 === 0 ? "#263544" : "#2c3e50", zIndex: 2, borderRight: "2px solid #555", fontWeight: "bold", textAlign: "left" }}>{p.name}</td>
+                                       <td style={{ padding: "10px", textAlign: "right", fontWeight: "900", color: totalColor, borderRight: "1px solid #555", fontSize: "1.1rem" }}>{total > 0 ? "+" : ""}{total}</td>
                                        {state.gameHistory.map((h, hIdx) => {
                                            const val = h[p.id] ?? 0;
                                            const color = val > 0 ? "#2ecc71" : (val < 0 ? "#ff5252" : "#ffffff");
-                                           return (
-                                               <td key={hIdx} style={{ padding: "10px", textAlign: "right", border: "1px solid #555", color: color, fontWeight: "bold" }}>
-                                                   {val > 0 ? "+" : ""}{val}
-                                               </td>
-                                           );
+                                           return <td key={hIdx} style={{ padding: "10px", textAlign: "right", border: "1px solid #555", color: color, fontWeight: "bold" }}>{val > 0 ? "+" : ""}{val}</td>;
                                        })}
                                    </tr>
                                );
@@ -2157,7 +2015,6 @@ export default function GanDengYan() {
                        </tbody>
                    </table>
                </div>
-               
                <div style={{ marginTop: "15px", display: "flex", justifyContent: "center", flexDirection: "column", alignItems: "center", gap: "5px" }}>
                    <button onClick={copyReportToClipboard} style={{ padding: "10px 20px", background: "#039be5", color: "white", border: "none", borderRadius: "5px", cursor: "pointer", fontWeight: "bold" }}>📋 复制战绩</button>
                </div>
@@ -2169,27 +2026,11 @@ export default function GanDengYan() {
   if (state.status === "scoring") {
      return (
         <div className="full-screen-overlay">
-           <div style={{ 
-               background: "#2c3e50", 
-               borderRadius: "16px", 
-               boxShadow: "0 10px 30px rgba(0,0,0,0.5)", 
-               width: "90%", maxWidth: "500px", overflow: "hidden",
-               border: "2px solid #f1c40f", display: "flex", flexDirection: "column", position: "relative"
-           }}>
-             <button
-               onClick={exitToLobby}
-               style={{
-                 position: "absolute", top: "15px", right: "15px",
-                 background: "rgba(0,0,0,0.2)", border: "none", color: "white",
-                 width: "36px", height: "36px", borderRadius: "50%",
-                 cursor: "pointer", fontSize: "20px", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10
-               }}
-             >✕</button>
-
+           <div style={{ background: "#2c3e50", borderRadius: "16px", boxShadow: "0 10px 30px rgba(0,0,0,0.5)", width: "90%", maxWidth: "500px", overflow: "hidden", border: "2px solid #f1c40f", display: "flex", flexDirection: "column", position: "relative" }}>
+             <button onClick={exitToLobby} style={{ position: "absolute", top: "15px", right: "15px", background: "rgba(0,0,0,0.2)", border: "none", color: "white", width: "36px", height: "36px", borderRadius: "50%", cursor: "pointer", fontSize: "20px", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10 }}>✕</button>
              <div style={{ background: "#a06000", padding: "20px", textAlign: "center", color: "white", borderBottom: "1px solid #c98e1a" }}>
                  <h2 style={{ margin: 0, fontSize: "1.8rem", fontWeight: "900" }}>第 {state.gameHistory.length} 局分数结算</h2>
              </div>
-             
              <div style={{ padding: "20px", background: "#2c3e50", flex: 1 }}>
                <div style={{ display: "grid", gridTemplateColumns: "1fr 2.5fr 50px 50px", gap: "10px", color: "#95a5a6", fontSize: "1rem", marginBottom: "15px", paddingBottom: "10px", borderBottom: "1px solid #34495e", fontWeight: "bold" }}>
                   <div style={{ textAlign: "left" }}>玩家</div>
@@ -2197,28 +2038,15 @@ export default function GanDengYan() {
                   <div style={{ textAlign: "right" }}>本局</div>
                   <div style={{ textAlign: "right" }}>总分</div>
                </div>
-               
                <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                  {state.players.map(p => {
                     const totalScore = state.scores[p.id] || 0;
                     const multiplier = Math.pow(2, state.bombCount);
-                    let roundScore = 0;
-                    const isWinner = p.id === state.lastWinnerIndex;
-                    let detailText = "";
-
                     const lastHistory = state.gameHistory[state.gameHistory.length - 1] || {};
-                    roundScore = lastHistory[p.id] || 0;
-
-                    if (isWinner) {
-                       detailText = "赢家通吃";
-                    } else {
-                       let base = p.cardsLeft;
-                       let baseText = `剩${base}张`;
-                       if (base === 1) { base = 0; baseText = `剩1张(免输)`; }
-                       if (p.cardsLeft === 5 && !p.hasPlayed) { base = p.cardsLeft * 2; baseText = `全关x2`; }
-                       detailText = baseText;
-                       if (multiplier > 1 && p.cardsLeft !== 1) detailText += ` x${multiplier}倍`;
-                    }
+                    const roundScore = lastHistory[p.id] || 0;
+                    const isWinner = p.id === state.lastWinnerIndex;
+                    let detailText = isWinner ? "赢家通吃" : `剩${p.cardsLeft}张${p.cardsLeft === 1 ? "(免输)" : (p.cardsLeft === 5 && !p.hasPlayed ? " 全关x2" : "")}`;
+                    if (!isWinner && multiplier > 1 && p.cardsLeft !== 1) detailText += ` x${multiplier}倍`;
 
                     return (
                        <div key={p.id} style={{ display: "grid", gridTemplateColumns: "1fr 2.5fr 50px 50px", gap: "10px", alignItems: "center", background: isWinner ? "rgba(255, 193, 7, 0.2)" : "transparent", padding: "10px 10px", borderRadius: "8px", borderBottom: "1px solid #34495e" }}>
@@ -2234,21 +2062,9 @@ export default function GanDengYan() {
                  })}
                </div>
              </div>
-             
              <div style={{ padding: "20px", textAlign: "center", background: "#2c3e50", display: "flex", flexDirection: "column", gap: "10px" }}>
-                 <button 
-                   onClick={() => state.isHost && startGame(state.players.length)}
-                   disabled={!state.isHost}
-                   style={{ padding: "15px 80px", fontSize: "1.3rem", cursor: state.isHost ? "pointer" : "not-allowed", background: state.isHost ? "#d4a017" : "#7f8c8d", border: "none", borderRadius: "10px", fontWeight: "bold", color: "white", boxShadow: "0 4px 0 rgba(0,0,0,0.2)" }}
-                 >
-                   {state.isHost ? "下一局" : "等待房主..."}
-                 </button>
-                 <button 
-                   onClick={() => setShowReport(true)}
-                   style={{ background: "transparent", border: "1px solid #7f8c8d", color: "#bdc3c7", padding: "10px", borderRadius: "8px", cursor: "pointer" }}
-                 >
-                   📊 查看战绩
-                 </button>
+                 <button onClick={() => state.isHost && startGame(state.players.length)} disabled={!state.isHost} style={{ padding: "15px 80px", fontSize: "1.3rem", cursor: state.isHost ? "pointer" : "not-allowed", background: state.isHost ? "#d4a017" : "#7f8c8d", border: "none", borderRadius: "10px", fontWeight: "bold", color: "white", boxShadow: "0 4px 0 rgba(0,0,0,0.2)" }}>{state.isHost ? "下一局" : "等待房主..."}</button>
+                 <button onClick={() => setShowReport(true)} style={{ background: "transparent", border: "1px solid #7f8c8d", color: "#bdc3c7", padding: "10px", borderRadius: "8px", cursor: "pointer" }}>📊 查看战绩</button>
              </div>
            </div>
         </div>
@@ -2257,89 +2073,50 @@ export default function GanDengYan() {
 
   const opponents = state.players.filter(p => p.id !== myId);
   const cardCount = user.hand.length;
-  // Increase squeeze factor and base offset for tighter hand
   const squeeze = cardCount <= 5 ? -50 : -50 - ((cardCount - 5) * 5);
   const cardOverlap = Math.max(-80, squeeze);
   const isMyTurn = state.currentPlayerIndex === myId;
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", position: "relative", overflow: "hidden" }}>
-      
-      <div style={{ position: "absolute", top: "10px", left: "10px", zIndex: 50, color: "white", textShadow: "1px 1px 2px black", fontWeight: "bold", fontSize: "1.2rem", background: "rgba(0,0,0,0.3)", padding: "5px 12px", borderRadius: "15px" }}>
-         第 {state.gameHistory.length + 1} 局
-      </div>
-
+      <div style={{ position: "absolute", top: "10px", left: "10px", zIndex: 50, color: "white", textShadow: "1px 1px 2px black", fontWeight: "bold", fontSize: "1.2rem", background: "rgba(0,0,0,0.3)", padding: "5px 12px", borderRadius: "15px" }}>第 {state.gameHistory.length + 1} 局</div>
       <div style={{ position: "absolute", top: "10px", right: "10px", zIndex: 50, display: "flex", gap: "10px" }}>
         <button onClick={toggleMute} style={{ background: "rgba(0,0,0,0.4)", color: "white", border: "2px solid white", borderRadius: "50%", width: "40px", height: "40px", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: "16px" }}>{muted ? "🔇" : "🔊"}</button>
         <button onClick={exitToLobby} style={{ background: "rgba(0,0,0,0.4)", color: "white", border: "1px solid white", borderRadius: "20px", padding: "5px 15px", cursor: "pointer", height: "40px", fontWeight: "bold" }}>退出</button>
       </div>
-
       {showChatModal && (
           <div className="full-screen-overlay" style={{ zIndex: 200, justifyContent: "flex-end", background: "rgba(0,0,0,0.6)" }} onClick={() => setShowChatModal(false)}>
               <div style={{ background: "#f0f0f0", width: "100%", borderTopLeftRadius: "20px", borderTopRightRadius: "20px", padding: "20px", maxHeight: "60vh", overflowY: "auto", animation: "slideInBottom 0.2s" }} onClick={e => e.stopPropagation()}>
                   <div style={{ textAlign: "center", color: "#333", fontWeight: "bold", marginBottom: "15px", fontSize: "1.1rem" }}>快捷语音</div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                       {CHAT_PHRASES.map((phrase, idx) => (
-                          <button 
-                            key={idx} 
-                            onClick={() => handleChat(phrase)}
-                            style={{ 
-                                padding: "12px 10px", 
-                                background: "#fff", 
-                                border: "1px solid #ccc", 
-                                borderRadius: "8px", 
-                                fontSize: "0.9rem", 
-                                color: "#333", 
-                                textAlign: "left", 
-                                cursor: "pointer",
-                                boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
-                                whiteSpace: "nowrap",
-                                overflow: "hidden",
-                                textOverflow: "ellipsis"
-                            }}
-                          >
-                              {phrase}
-                          </button>
+                          <button key={idx} onClick={() => handleChat(phrase)} style={{ padding: "12px 10px", background: "#fff", border: "1px solid #ccc", borderRadius: "8px", fontSize: "0.9rem", color: "#333", textAlign: "left", cursor: "pointer", boxShadow: "0 1px 2px rgba(0,0,0,0.05)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{phrase}</button>
                       ))}
                   </div>
                   <button onClick={() => setShowChatModal(false)} style={{ width: "100%", padding: "15px", marginTop: "15px", border: "none", background: "transparent", color: "#999" }}>关闭</button>
               </div>
           </div>
       )}
-
       <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: "260px", pointerEvents: "none" }}>
         {opponents.map((opp) => {
           const posClass = getOpponentPositionStyle(opp.id, state.players.length);
           const avatar = BOT_AVATARS[(opp.id - 1) % BOT_AVATARS.length] || "👤";
-          const isOppDealer = state.dealerId === opp.id;
-          const isOffline = opp.online === false;
           const chatText = chatBubbles[opp.id];
+          const isLeftSide = posClass.includes("left") && !posClass.includes("top");
+          const isRightSide = posClass.includes("right") && !posClass.includes("top");
           
-          const isTopRow = posClass.includes("top");
-          const isLeftSide = posClass.includes("left") && !isTopRow;
-          const isRightSide = posClass.includes("right") && !isTopRow;
-
-          let bubbleStyle: React.CSSProperties = { position: "absolute", top: "-50px" };
-          
-          if (isLeftSide) {
-              bubbleStyle = { ...bubbleStyle, left: "0", right: "auto", transform: "none", borderRadius: "15px 15px 15px 0" };
-          } else if (isRightSide) {
-              bubbleStyle = { ...bubbleStyle, right: "0", left: "auto", transform: "none", borderRadius: "15px 15px 0 15px" };
-          } else {
-              // Top or defaults
-              bubbleStyle = { ...bubbleStyle, left: "50%", transform: "translateX(-50%)", borderRadius: "15px" };
-          }
+          let bubbleStyle: React.CSSProperties = { position: "absolute", top: "-50px", left: 0, right: 0, margin: "0 auto", width: "fit-content", transform: "none", borderRadius: "15px" };
+          if (isLeftSide) bubbleStyle = { ...bubbleStyle, left: "0", right: "auto", margin: 0, borderRadius: "15px 15px 15px 0" };
+          else if (isRightSide) bubbleStyle = { ...bubbleStyle, right: "0", left: "auto", margin: 0, borderRadius: "15px 15px 0 15px" };
 
           return (
-            <div key={opp.id} className={`opponent-container ${posClass}`} style={{ opacity: isOffline ? 0.5 : (state.currentPlayerIndex === opp.id ? 1 : 0.7), transform: state.currentPlayerIndex === opp.id ? "scale(1.15)" : "scale(1)", zIndex: 10 }}>
+            <div key={opp.id} className={`opponent-container ${posClass}`} style={{ opacity: opp.online === false ? 0.5 : (state.currentPlayerIndex === opp.id ? 1 : 0.7), transform: state.currentPlayerIndex === opp.id ? "scale(1.15)" : "scale(1)", zIndex: 10 }}>
               <div style={{ position: "relative" }}>
-                 <div style={{ width: "38px", height: "38px", borderRadius: "50%", background: isOffline ? "#555" : opp.color, display: "flex", alignItems: "center", justifyContent: "center", border: state.currentPlayerIndex === opp.id ? "3px solid #fbc02d" : "2px solid #fff", color: "white", fontSize: "22px", boxShadow: "0 2px 4px rgba(0,0,0,0.3)" }}>
-                    {isOffline ? "🚫" : avatar}
-                 </div>
-                 {isOppDealer && <div className="dealer-badge">庄</div>}
+                 <div style={{ width: "38px", height: "38px", borderRadius: "50%", background: opp.online === false ? "#555" : opp.color, display: "flex", alignItems: "center", justifyContent: "center", border: state.currentPlayerIndex === opp.id ? "3px solid #fbc02d" : "2px solid #fff", color: "white", fontSize: "22px", boxShadow: "0 2px 4px rgba(0,0,0,0.3)" }}>{opp.online === false ? "🚫" : avatar}</div>
+                 {state.dealerId === opp.id && <div className="dealer-badge">庄</div>}
                  {chatText && <div className="chat-bubble" style={bubbleStyle}>{chatText}</div>}
                  {opp.lastAction === "PASS" && !chatText && <div className="pass-bubble">不要</div>}
-                 {isOffline && <div style={{ position: "absolute", top: "-15px", left: "50%", transform: "translateX(-50%)", background: "#c0392b", color: "white", fontSize: "10px", padding: "2px 5px", borderRadius: "4px", whiteSpace: "nowrap", border: "1px solid white" }}>离线</div>}
+                 {opp.online === false && <div style={{ position: "absolute", top: "-15px", left: 0, right: 0, margin: "0 auto", width: "fit-content", background: "#c0392b", color: "white", fontSize: "10px", padding: "2px 5px", borderRadius: "4px", whiteSpace: "nowrap", border: "1px solid white" }}>离线</div>}
               </div>
               <div style={{ background: "#fff", color: "#d32f2f", padding: "2px 8px", borderRadius: "10px", marginTop: "-10px", fontWeight: "bold", fontSize: "1.2rem", zIndex: 2, position: "relative", boxShadow: "0 1px 2px black" }}>{opp.cardsLeft}</div>
               <div style={{ fontSize: "0.8rem", marginTop: "4px", textShadow: "1px 1px 2px black", background: "rgba(0,0,0,0.5)", padding: "2px 4px", borderRadius: "4px" }}>{opp.name}</div>
@@ -2347,221 +2124,60 @@ export default function GanDengYan() {
           );
         })}
       </div>
-
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
-        
-        {/* DECK INFO / BACKGROUND - REPLACES THE "EMPTY" BOX */}
-        {/* Position matched exactly to pile: scale(1.2) translateY(73px) */}
-        <div style={{ 
-            position: "absolute", 
-            transform: "scale(1.2) translateY(73px)", 
-            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-            opacity: 0.5, 
-            pointerEvents: "none", 
-            zIndex: 0, // Behind played cards
-            width: "70px", 
-            height: "98px",
-            border: "2px dashed rgba(255,255,255,0.3)",
-            borderRadius: "6px",
-            color: "white"
-        }}>
+        <div style={{ position: "absolute", transform: "scale(1.2) translateY(73px)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", opacity: 0.5, pointerEvents: "none", zIndex: 0, width: "70px", height: "98px", border: "2px dashed rgba(255,255,255,0.3)", borderRadius: "6px", color: "white" }}>
             <div style={{ fontSize: "32px", lineHeight: 1 }}>🂠</div>
-            <div style={{ fontSize: "12px", fontWeight: "bold", marginTop: "2px", textShadow: "0 1px 2px black" }}>
-                剩{state.deck.length}
-            </div>
+            <div style={{ fontSize: "12px", fontWeight: "bold", marginTop: "2px", textShadow: "0 1px 2px black" }}>剩{state.deck.length}</div>
         </div>
-
-        {/* PLAYED CARDS PILE */}
         <div style={{ display: "flex", marginLeft: "-49px", transform: "scale(1.2) translateY(73px)", zIndex: 1 }}>
-          {state.tablePile.length === 0 ? (
-             // Keep spacing correct even if empty
-             <div style={{ marginLeft: "49px", width: "70px", height: "98px" }} />
-          ) : (
-             state.tablePile[state.tablePile.length - 1].cards.map((c, i) => (
-               <div key={c.id} className={getAnimClass(state.tablePile[state.tablePile.length - 1].playerId)} style={{ marginLeft: i === 0 ? "49px" : "-49px", zIndex: i }}>
-                  <CardView 
-                     card={c} 
-                     small 
-                   />
-               </div>
-             ))
-          )}
+          {state.tablePile.length > 0 && state.tablePile[state.tablePile.length - 1].cards.map((c, i) => (
+             <div key={c.id} className={getAnimClass(state.tablePile[state.tablePile.length - 1].playerId)} style={{ marginLeft: i === 0 ? "49px" : "-49px", zIndex: i }}><CardView card={c} small /></div>
+          ))}
         </div>
-        
-        {/* BOMB COUNT DISPLAY - HIDDEN WHEN CHATTING */}
-        <div style={{ 
-            position: "absolute", 
-            bottom: "-17px", 
-            background: "rgba(0,0,0,0.6)", 
-            padding: "8px 20px", 
-            borderRadius: "20px", 
-            border: "1px solid rgba(255,255,255,0.2)", 
-            zIndex: 40,
-            opacity: chatBubbles[myId] ? 0 : 1, 
-            transition: "opacity 0.2s"
-        }}>
+        <div style={{ position: "absolute", bottom: "-17px", background: "rgba(0,0,0,0.6)", padding: "8px 20px", borderRadius: "20px", border: "1px solid rgba(255,255,255,0.2)", zIndex: 40, opacity: chatBubbles[myId] ? 0 : 1, transition: "opacity 0.2s" }}>
            <span style={{ marginRight: "15px", color: "#e57373" }}>炸弹数: {state.bombCount}</span>
            <span style={{ color: "#fbc02d", fontWeight: "bold" }}>倍数: x{Math.pow(2, state.bombCount)}</span>
         </div>
-        
-        {/* MY CHAT BUBBLE - OVERLAYS BOMB COUNT */}
-        {chatBubbles[myId] && (
-             <div className="chat-bubble" style={{ 
-                 position: "absolute", 
-                 bottom: "-17px", 
-                 left: "50%", 
-                 transform: "translateX(-50%)", 
-                 zIndex: 42,
-                 whiteSpace: "nowrap"
-             }}>
-                {chatBubbles[myId]}
-             </div>
-        )}
-        
-        <div style={{ position: "absolute", bottom: "-58px", background: "rgba(255,255,255,0.9)", color: "#000", padding: "8px 16px", borderRadius: "4px", fontWeight: "bold", display: lastMessage ? "block" : "none", maxWidth: "90%", textAlign: "center", boxShadow: "0 2px 10px rgba(0,0,0,0.3)", zIndex: 40 }}>
-          {lastMessage}
-        </div>
+        {chatBubbles[myId] && <div className="chat-bubble" style={{ position: "absolute", bottom: "-17px", left: 0, right: 0, margin: "0 auto", width: "fit-content", zIndex: 42, whiteSpace: "nowrap" }}>{chatBubbles[myId]}</div>}
+        <div style={{ position: "absolute", bottom: "-58px", background: "rgba(255,255,255,0.9)", color: "#000", padding: "8px 16px", borderRadius: "4px", fontWeight: "bold", display: lastMessage ? "block" : "none", maxWidth: "90%", textAlign: "center", boxShadow: "0 2px 10px rgba(0,0,0,0.3)", zIndex: 40 }}>{lastMessage}</div>
       </div>
-
       {hostOffline && (
           <div className="full-screen-overlay" style={{ zIndex: 999 }}>
                <div style={{ fontSize: "3rem", marginBottom: "20px" }}>🔌</div>
                <h2 style={{ color: "white", margin: "10px" }}>房主已断线</h2>
                <div style={{ color: "#ccc" }}>正在尝试重新连接...</div>
-               <div style={{ marginTop: "20px" }}>
-                   <div style={{ width: "40px", height: "40px", border: "4px solid #fff", borderTop: "4px solid transparent", borderRadius: "50%", animation: "deal 1s linear infinite" }}></div>
-               </div>
-               <button onClick={exitToLobby} style={{ marginTop: "30px", background: "transparent", border: "1px solid white", padding: "5px 15px", color: "white", borderRadius: "20px" }}>
-                   退出
-               </button>
+               <div style={{ marginTop: "20px" }}><div style={{ width: "40px", height: "40px", border: "4px solid #fff", borderTop: "4px solid transparent", borderRadius: "50%", animation: "deal 1s linear infinite" }}></div></div>
+               <button onClick={exitToLobby} style={{ marginTop: "30px", background: "transparent", border: "1px solid white", padding: "5px 15px", color: "white", borderRadius: "20px" }}>退出</button>
           </div>
       )}
-
-      {/* FIXED CONTROL ROW - FULLY DECOUPLED */}
-      <div style={{ 
-          position: "absolute", 
-          bottom: "170px", // FIXED BOTTOM 
-          left: 0,
-          width: "100%", 
-          height: "40px", // FIXED HEIGHT - WILL NOT COLLAPSE
-          zIndex: 80, 
-          pointerEvents: "none",
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center"
-      }}>
-         {/* 1. BUTTON GROUP (CENTERED) */}
+      <div style={{ position: "absolute", bottom: "170px", left: 0, width: "100%", height: "40px", zIndex: 80, pointerEvents: "none", display: "flex", justifyContent: "center", alignItems: "center" }}>
          <div style={{ pointerEvents: "auto", display: "flex", justifyContent: "center", alignItems: "center", gap: "15px", position: "relative" }}>
-            {user.lastAction === "PASS" && !isMyTurn && !chatBubbles[myId] && (
-                 <div className="pass-bubble" style={{ position: "absolute", top: "-40px", left: "50%", transform: "translateX(-50%)" }}>不要</div>
-            )}
-            
+            {user.lastAction === "PASS" && !isMyTurn && !chatBubbles[myId] && <div className="pass-bubble" style={{ position: "absolute", top: "-40px", left: 0, right: 0, margin: "0 auto", width: "fit-content" }}>不要</div>}
             {isMyTurn && state.status === 'playing' && (
               <>
-                {countdown !== null && (
-                    <div style={{
-                        position: "absolute",
-                        left: "50%",
-                        transform: "translateX(-130px)",
-                        width: "36px", height: "36px",
-                        background: countdown <= 3 ? "#d32f2f" : "#fcc603",
-                        color: countdown <= 3 ? "white" : "#333",
-                        borderRadius: "50%",
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        fontWeight: "bold", fontSize: "1.2rem",
-                        border: "2px solid white",
-                        boxShadow: "0 2px 4px rgba(0,0,0,0.3)",
-                        zIndex: 30
-                    }}>
-                        {countdown}
-                    </div>
-                )}
-                <button 
-                  onClick={handleUserPass}
-                  disabled={state.tablePile.length === 0 && state.lastWinnerIndex === myId}
-                  style={{ padding: "10px 20px", background: "#cfd8dc", border: "none", borderRadius: "20px", fontWeight: "bold", fontSize: "1rem", cursor: "pointer", boxShadow: "0 2px 0 #90a4ae", color: "#37474f" }}
-                >
-                  不要
-                </button>
-                <button 
-                  onClick={handleUserPlay} 
-                  disabled={selectedCardIds.length === 0}
-                  style={{ padding: "10px 20px", background: "#29b6f6", border: "none", borderRadius: "20px", fontWeight: "bold", fontSize: "1rem", opacity: selectedCardIds.length === 0 ? 0.5 : 1, cursor: "pointer", boxShadow: "0 2px 0 #0288d1", color: "#fff" }}
-                >
-                  出牌
-                </button>
+                {countdown !== null && <div style={{ position: "absolute", left: "50%", transform: "translateX(-130px)", width: "36px", height: "36px", background: countdown <= 3 ? "#d32f2f" : "#fcc603", color: countdown <= 3 ? "white" : "#333", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "bold", fontSize: "1.2rem", border: "2px solid white", boxShadow: "0 2px 4px rgba(0,0,0,0.3)", zIndex: 30 }}>{countdown}</div>}
+                <button onClick={handleUserPass} disabled={state.tablePile.length === 0 && state.lastWinnerIndex === myId} style={{ padding: "10px 20px", background: "#cfd8dc", border: "none", borderRadius: "20px", fontWeight: "bold", fontSize: "1rem", cursor: "pointer", boxShadow: "0 2px 0 #90a4ae", color: "#37474f" }}>不要</button>
+                <button onClick={handleUserPlay} disabled={selectedCardIds.length === 0} style={{ padding: "10px 20px", background: "#29b6f6", border: "none", borderRadius: "20px", fontWeight: "bold", fontSize: "1rem", opacity: selectedCardIds.length === 0 ? 0.5 : 1, cursor: "pointer", boxShadow: "0 2px 0 #0288d1", color: "#fff" }}>出牌</button>
               </>
             )}
          </div>
-
-         {/* 2. DEALER BADGE (ABSOLUTE LEFT) - SEPARATE FROM BUTTONS */}
-         {isDealer && (
-            <div className="dealer-badge" style={{ 
-                position: "absolute", 
-                left: "7px", 
-                width: "36px", height: "36px", fontSize: "18px", 
-                border: "2px solid white", boxShadow: "0 2px 5px rgba(0,0,0,0.5)",
-                zIndex: 25,
-                background: '#ff5252', 
-                color: 'white',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                borderRadius: '50%',
-                top: "50%",
-                transform: "translateY(-50%)"
-            }}>庄</div>
-         )}
-
-         {/* 3. CHAT BUTTON (ABSOLUTE RIGHT) */}
-         <button onClick={() => setShowChatModal(true)} style={{ 
-             position: "absolute", 
-             right: "15px", 
-             top: "50%",
-             transform: "translateY(-50%)",
-             background: "rgba(0,0,0,0.5)",
-             color: "white", 
-             border: "2px solid white", 
-             borderRadius: "50%", 
-             width: "44px", 
-             height: "44px", 
-             display: "flex", 
-             alignItems: "center", 
-             justifyContent: "center", 
-             cursor: "pointer", 
-             fontSize: "22px",
-             boxShadow: "0 2px 5px rgba(0,0,0,0.3)",
-             zIndex: 90,
-             pointerEvents: "auto"
-         }}>💬</button>
+         {isDealer && <div className="dealer-badge" style={{ position: "absolute", left: "7px", width: "36px", height: "36px", fontSize: "18px", border: "2px solid white", boxShadow: "0 2px 5px rgba(0,0,0,0.5)", zIndex: 25, background: '#ff5252', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', top: "50%", transform: "translateY(-50%)" }}>庄</div>}
+         <button onClick={() => setShowChatModal(true)} style={{ position: "absolute", right: "15px", top: "50%", transform: "translateY(-50%)", background: "rgba(0,0,0,0.5)", color: "white", border: "2px solid white", borderRadius: "50%", width: "44px", height: "44px", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: "22px", boxShadow: "0 2px 5px rgba(0,0,0,0.3)", zIndex: 90, pointerEvents: "auto" }}>💬</button>
       </div>
-
       <div style={{ height: "260px", display: "flex", flexDirection: "column", justifyContent: "flex-end", paddingBottom: "13px", background: "linear-gradient(to top, rgba(0,0,0,0.6), transparent)", zIndex: 20, position: "relative" }}>
          <div style={{ display: "flex", justifyContent: "center", height: "130px", overflow: "visible" }}>
             <div style={{ display: "flex", marginLeft: "-50px" }}>
               {user.hand.map((card, i) => (
-                <div key={card.id} style={{ marginLeft: i === 0 ? "50px" : `${cardOverlap}px`, zIndex: i }}>
-                   <CardView 
-                     card={card} 
-                     selected={selectedCardIds.includes(card.id)} 
-                     onClick={() => toggleCardSelect(card.id)}
-                   />
-                </div>
+                <div key={card.id} style={{ marginLeft: i === 0 ? "50px" : `${cardOverlap}px`, zIndex: i }}><CardView card={card} selected={selectedCardIds.includes(card.id)} onClick={() => toggleCardSelect(card.id)} /></div>
               ))}
             </div>
          </div>
       </div>
-
       {bombToast && <BombEffect text={bombToast} />}
-
       {state.status === "celebrating" && (
         <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, pointerEvents: "none", zIndex: 999 }}>
           <Confetti />
-          <div className="animate-pop" style={{ position: "absolute", top: "50px", width: "100%", textAlign: "center" }}>
-             <h1 style={{ fontSize: "4rem", color: "#fbc02d", textShadow: "0 0 10px red, 0 0 20px orange", margin: 0 }}>
-               {state.players[state.lastWinnerIndex].name} 赢了!
-             </h1>
-          </div>
+          <div className="animate-pop" style={{ position: "absolute", top: "50px", width: "100%", textAlign: "center" }}><h1 style={{ fontSize: "4rem", color: "#fbc02d", textShadow: "0 0 10px red, 0 0 20px orange", margin: 0 }}>{state.players[state.lastWinnerIndex].name} 赢了!</h1></div>
         </div>
       )}
     </div>
